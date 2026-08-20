@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aide-bot
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: aide-bot
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aide-bot
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aide-bot
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: aide-bot
+          image: ghcr.io/gogaapps/aide-bot:bootstrap
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: aide-bot-config
+            - secretRef:
+                name: aide-bot-secret
+                optional: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+      terminationGracePeriodSeconds: 30

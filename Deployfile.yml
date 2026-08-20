@@ -1,0 +1,46 @@
+format: 4
+version: 0.2.0
+
+metadata:
+  name: aide-bot
+  system: aide-bot
+  lang: go
+  lang_version: "1.24"
+  deploy_to: k8s
+
+spec:
+  - data:
+      common:
+        image: "ghcr.io/gogaapps/aide-bot"
+
+      deployment:
+        replicas: 1
+        namespace: apps
+        request_cpu: 50
+        limit_mem: 256
+
+        opensearch_log_format: json
+
+        env:
+          SERVICE_NAME: aide-bot
+          APP_NAME: aide-bot
+          APP_ENV: "{{ values.environment }}"
+          LOG_LEVEL: INFO
+
+  - subject:
+      environment: ["preproduction"]
+    data:
+      deployment:
+        replicas: 1
+        env:
+          APP_ENV: preproduction
+          LOG_LEVEL: DEBUG
+
+  - subject:
+      environment: ["production"]
+    data:
+      deployment:
+        replicas: 1
+        env:
+          APP_ENV: production
+          LOG_LEVEL: INFO

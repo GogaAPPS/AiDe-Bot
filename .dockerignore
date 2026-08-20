@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.DS_Store
+
+bin/
+coverage.out
+tmp/
+
+README.md
+docs/
+deployments/
+k8s/
+scripts/
