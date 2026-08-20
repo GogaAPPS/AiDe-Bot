@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aide-bot-config
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: aide-bot
+data:
+  APP_NAME: aide-bot
+  APP_ENV: production
+  LOG_LEVEL: INFO
+  MAX_API_BASE_URL: ""
+  MAX_REQUEST_TIMEOUT: 10s
+  MAX_POLLING_PAUSE: 500ms
+  MAX_POLLING_TIMEOUT: 30s

@@ -1,0 +1,6 @@
+services:
+  aide-bot:
+    build: .
+    env_file:
+      - .env.example
+    restart: unless-stopped
