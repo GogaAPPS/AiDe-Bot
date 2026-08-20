@@ -2,5 +2,5 @@ services:
   aide-bot:
     build: .
     env_file:
-      - .env
+      - .env.example
     restart: unless-stopped
