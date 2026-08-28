@@ -15,6 +15,7 @@ type Settings struct {
 	MaxBotToken           string
 	MaxAPIBaseURL         string
 	BackendAPIBaseURL     string
+	BackendMessagesPath   string
 	BackendStub           bool
 	BackendRequestTimeout time.Duration
 	RequestTimeout        time.Duration
@@ -30,6 +31,7 @@ func Load() (Settings, error) {
 		MaxBotToken:           strings.TrimSpace(os.Getenv("MAX_BOT_TOKEN")),
 		MaxAPIBaseURL:         strings.TrimSpace(os.Getenv("MAX_API_BASE_URL")),
 		BackendAPIBaseURL:     strings.TrimSpace(os.Getenv("BACKEND_API_BASE_URL")),
+		BackendMessagesPath:   getEnv("BACKEND_MESSAGES_PATH", "/messages"),
 		BackendStub:           getBool("BACKEND_STUB", true),
 		BackendRequestTimeout: getDuration("BACKEND_REQUEST_TIMEOUT", 10*time.Second),
 		RequestTimeout:        getDuration("MAX_REQUEST_TIMEOUT", 10*time.Second),

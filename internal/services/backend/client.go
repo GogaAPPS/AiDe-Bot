@@ -1,8 +1,12 @@
 package backend
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,9 +16,10 @@ import (
 )
 
 type BackendClient struct {
-	baseURL    string
-	httpClient *http.Client
-	stub       bool
+	baseURL     string
+	messagesURL string
+	httpClient  *http.Client
+	stub        bool
 
 	mu     sync.RWMutex
 	status domain.BackendStatus
@@ -26,10 +31,11 @@ func NewClient(settings config.Settings) (*BackendClient, error) {
 	}
 
 	return &BackendClient{
-		baseURL:    strings.TrimRight(settings.BackendAPIBaseURL, "/"),
-		httpClient: &http.Client{Timeout: settings.BackendRequestTimeout},
-		stub:       settings.BackendStub,
-		status:     domain.BackendStatusSuccess,
+		baseURL:     strings.TrimRight(settings.BackendAPIBaseURL, "/"),
+		messagesURL: strings.TrimRight(settings.BackendAPIBaseURL, "/") + "/" + strings.TrimLeft(settings.BackendMessagesPath, "/"),
+		httpClient:  &http.Client{Timeout: settings.BackendRequestTimeout},
+		stub:        settings.BackendStub,
+		status:      domain.BackendStatusSuccess,
 	}, nil
 }
 
@@ -50,10 +56,14 @@ func (c *BackendClient) SendMessage(ctx context.Context, message domain.Incoming
 	if err := ctx.Err(); err != nil {
 		return c.errorMessage(message, err)
 	}
-	if !c.stub {
-		return c.errorMessage(message, errors.New("backend HTTP transport is not implemented"))
+	if c.stub {
+		return c.sendMessageStub(message)
 	}
 
+	return c.sendMessageHTTP(ctx, message)
+}
+
+func (c *BackendClient) sendMessageStub(message domain.IncomingMessage) (domain.BackendMessage, error) {
 	responseText := "Сообщение получил."
 	if strings.HasPrefix(strings.TrimSpace(message.Text), "/start") {
 		responseText = "Привет! Я AiDe."
@@ -64,6 +74,64 @@ func (c *BackendClient) SendMessage(ctx context.Context, message domain.Incoming
 		Text: responseText, MessageID: message.MessageID, Target: message.Target,
 		Status: domain.BackendStatusSuccess,
 	}, nil
+}
+
+func (c *BackendClient) sendMessageHTTP(ctx context.Context, message domain.IncomingMessage) (domain.BackendMessage, error) {
+	payload, err := json.Marshal(sendMessageRequest{
+		MessageID: message.MessageID,
+		Text:      message.Text,
+		ChatID:    message.Target.ChatID,
+		UserID:    message.Target.UserID,
+	})
+	if err != nil {
+		return c.errorMessage(message, fmt.Errorf("marshal backend request: %w", err))
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.messagesURL, bytes.NewReader(payload))
+	if err != nil {
+		return c.errorMessage(message, fmt.Errorf("create backend request: %w", err))
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	httpResponse, err := c.httpClient.Do(request)
+	if err != nil {
+		return c.errorMessage(message, fmt.Errorf("send backend request: %w", err))
+	}
+	defer httpResponse.Body.Close()
+
+	if httpResponse.StatusCode < http.StatusOK || httpResponse.StatusCode >= http.StatusMultipleChoices {
+		return c.errorMessage(message, fmt.Errorf("backend returned HTTP status %d", httpResponse.StatusCode))
+	}
+
+	var responseBody sendMessageResponse
+	decoder := json.NewDecoder(io.LimitReader(httpResponse.Body, 1<<20))
+	if err := decoder.Decode(&responseBody); err != nil {
+		return c.errorMessage(message, fmt.Errorf("decode backend response: %w", err))
+	}
+
+	if responseBody.Status != string(domain.BackendStatusSuccess) {
+		backendError := responseBody.Error
+		if backendError == "" {
+			backendError = "backend returned unsuccessful response"
+		}
+		return c.errorMessage(message, errors.New(backendError))
+	}
+	if responseBody.Text == "" && responseBody.File == nil {
+		return c.errorMessage(message, errors.New("backend response contains neither text nor file"))
+	}
+
+	response := domain.BackendMessage{
+		Text: responseBody.Text, MessageID: message.MessageID, Target: message.Target,
+		Status: domain.BackendStatusSuccess,
+	}
+	if responseBody.File != nil {
+		response.File = &domain.BackendFile{
+			Name: responseBody.File.Name, ContentType: responseBody.File.ContentType, Data: responseBody.File.Data,
+		}
+	}
+
+	c.setState(domain.BackendStatusSuccess)
+	return response, nil
 }
 
 func (c *BackendClient) Consult(ctx context.Context, request ConsultationRequest) (ConsultationResponse, error) {
