@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/GogaAPPS/AiDe-Bot/internal/core/config"
-	"github.com/GogaAPPS/AiDe-Bot/internal/services/dialog"
+	"github.com/GogaAPPS/AiDe-Bot/internal/domain"
+	"github.com/GogaAPPS/AiDe-Bot/internal/services/backend"
 	"github.com/GogaAPPS/AiDe-Bot/internal/services/maxapi"
 )
 
 type App struct {
 	client  *maxapi.Client
-	dialog  *dialog.Service
+	backend *backend.BackendClient
 	logger  *slog.Logger
 	backoff time.Duration
 }
@@ -23,10 +24,14 @@ func New(settings config.Settings, logger *slog.Logger) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	backendClient, err := backend.NewClient(settings)
+	if err != nil {
+		return nil, err
+	}
 
 	return &App{
 		client:  client,
-		dialog:  dialog.NewService(),
+		backend: backendClient,
 		logger:  logger,
 		backoff: time.Second,
 	}, nil
@@ -68,8 +73,12 @@ func (a *App) Run(ctx context.Context) error {
 				continue
 			}
 
-			response := a.dialog.Handle(message)
-			if response.Text == "" {
+			response, err := a.backend.SendMessage(ctx, message)
+			if err != nil {
+				a.logger.Error("backend message", "error", err)
+				continue
+			}
+			if response.Status != domain.BackendStatusSuccess || response.Text == "" {
 				continue
 			}
 
