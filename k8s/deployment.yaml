@@ -26,7 +26,7 @@ spec:
       containers:
         - name: aide-bot
           image: ghcr.io/gogaapps/aide-bot:bootstrap
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           envFrom:
             - configMapRef:
                 name: aide-bot-config

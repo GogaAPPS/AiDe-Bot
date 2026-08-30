@@ -31,10 +31,10 @@ func Load() (Settings, error) {
 		MaxBotToken:           strings.TrimSpace(os.Getenv("MAX_BOT_TOKEN")),
 		MaxAPIBaseURL:         strings.TrimSpace(os.Getenv("MAX_API_BASE_URL")),
 		BackendAPIBaseURL:     strings.TrimSpace(os.Getenv("BACKEND_API_BASE_URL")),
-		BackendMessagesPath:   getEnv("BACKEND_MESSAGES_PATH", "/messages"),
+		BackendMessagesPath:   getEnv("BACKEND_MESSAGES_PATH", "/api/v1/process"),
 		BackendStub:           getBool("BACKEND_STUB", true),
 		BackendRequestTimeout: getDuration("BACKEND_REQUEST_TIMEOUT", 10*time.Second),
-		RequestTimeout:        getDuration("MAX_REQUEST_TIMEOUT", 10*time.Second),
+		RequestTimeout:        getDuration("MAX_REQUEST_TIMEOUT", 45*time.Second),
 		PollingPause:          getDuration("MAX_POLLING_PAUSE", 500*time.Millisecond),
 		PollingTimeout:        getDuration("MAX_POLLING_TIMEOUT", 30*time.Second),
 	}

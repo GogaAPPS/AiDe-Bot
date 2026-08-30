@@ -33,10 +33,26 @@ func NewClient(settings config.Settings) (*BackendClient, error) {
 	return &BackendClient{
 		baseURL:     strings.TrimRight(settings.BackendAPIBaseURL, "/"),
 		messagesURL: strings.TrimRight(settings.BackendAPIBaseURL, "/") + "/" + strings.TrimLeft(settings.BackendMessagesPath, "/"),
-		httpClient:  &http.Client{Timeout: settings.BackendRequestTimeout},
-		stub:        settings.BackendStub,
-		status:      domain.BackendStatusSuccess,
+		httpClient: &http.Client{
+			Timeout:       settings.BackendRequestTimeout,
+			CheckRedirect: rejectBackendRedirect,
+		},
+		stub:   settings.BackendStub,
+		status: domain.BackendStatusSuccess,
 	}, nil
+}
+
+func rejectBackendRedirect(request *http.Request, previous []*http.Request) error {
+	if len(previous) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"backend redirected %s %s to %s; check BACKEND_API_BASE_URL",
+		previous[0].Method,
+		previous[0].URL.String(),
+		request.URL.String(),
+	)
 }
 
 func (c *BackendClient) State() domain.BackendStatus {
@@ -126,7 +142,12 @@ func (c *BackendClient) sendMessageHTTP(ctx context.Context, message domain.Inco
 	}
 	if responseBody.File != nil {
 		response.File = &domain.BackendFile{
-			Name: responseBody.File.Name, ContentType: responseBody.File.ContentType, Data: responseBody.File.Data,
+			ID:        responseBody.File.ID,
+			Name:      responseBody.File.Name,
+			Path:      responseBody.File.Path,
+			URL:       responseBody.File.URL,
+			MIMEType:  responseBody.File.MIMEType,
+			SizeBytes: responseBody.File.SizeBytes,
 		}
 	}
 

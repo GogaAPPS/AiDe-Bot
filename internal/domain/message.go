@@ -20,14 +20,17 @@ type BackendStatus string
 
 const (
 	BackendStatusLoading BackendStatus = "loading"
-	BackendStatusSuccess BackendStatus = "success"
+	BackendStatusSuccess BackendStatus = "ok"
 	BackendStatusError   BackendStatus = "error"
 )
 
 type BackendFile struct {
-	Name        string
-	ContentType string
-	Data        []byte
+	ID        string
+	Name      string
+	Path      string
+	URL       string
+	MIMEType  string
+	SizeBytes int64
 }
 
 type BackendMessage struct {
