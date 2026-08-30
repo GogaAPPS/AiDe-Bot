@@ -1,10 +1,10 @@
 name: CI
 
 on:
-  pull_request:
   push:
-    branches-ignore:
-      - main
+
+permissions:
+  contents: read
 
 env:
   GO_VERSION: ${{ vars.GO_VERSION || '1.24.x' }}

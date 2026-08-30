@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,12 +62,12 @@ func TestSendMessageContextError(t *testing.T) {
 
 func TestSendMessageHTTPWithoutFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.URL.Path != "/messages" {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/process" {
 			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
 		}
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]string{
-			"status": "success",
+			"status": "ok",
 			"text":   "Ответ backend",
 		})
 	}))
@@ -74,7 +75,7 @@ func TestSendMessageHTTPWithoutFile(t *testing.T) {
 
 	client, err := NewClient(config.Settings{
 		BackendAPIBaseURL:     server.URL,
-		BackendMessagesPath:   "/messages",
+		BackendMessagesPath:   "/api/v1/process",
 		BackendRequestTimeout: time.Second,
 	})
 	if err != nil {
@@ -90,24 +91,52 @@ func TestSendMessageHTTPWithoutFile(t *testing.T) {
 func TestSendMessageHTTPWithFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		_ = json.NewEncoder(writer).Encode(map[string]any{
-			"status": "success",
+			"status": "ok",
 			"file": map[string]any{
-				"name":         "report.txt",
-				"content_type": "text/plain",
-				"data":         "cmVwb3J0",
+				"id":         "file-1",
+				"name":       "report.txt",
+				"path":       "/tmp/report.txt",
+				"url":        "https://example.com/report.txt",
+				"mime_type":  "text/plain",
+				"size_bytes": 6,
 			},
 		})
 	}))
 	defer server.Close()
 
-	client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL, BackendMessagesPath: "/messages"})
+	client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL, BackendMessagesPath: "/api/v1/process"})
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
 
 	response, err := client.SendMessage(context.Background(), domain.IncomingMessage{Text: "создай отчет"})
-	if err != nil || response.File == nil || string(response.File.Data) != "report" {
+	if err != nil || response.File == nil || response.File.ID != "file-1" || response.File.MIMEType != "text/plain" || response.File.SizeBytes != 6 {
 		t.Fatalf("unexpected response: %+v, error: %v", response, err)
+	}
+}
+
+func TestSendMessageHTTPRejectsRedirect(t *testing.T) {
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		t.Fatalf("redirect target should not be called: %s %s", request.Method, request.URL.Path)
+	}))
+	defer redirectTarget.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, redirectTarget.URL+"/api/v1/process", http.StatusFound)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL, BackendMessagesPath: "/api/v1/process"})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	response, err := client.SendMessage(context.Background(), domain.IncomingMessage{Text: "вопрос"})
+	if err == nil || response.Status != domain.BackendStatusError {
+		t.Fatalf("expected redirect error: response=%+v error=%v", response, err)
+	}
+	if !strings.Contains(err.Error(), "backend redirected POST") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -117,9 +146,9 @@ func TestSendMessageHTTPRejectsInvalidResponse(t *testing.T) {
 		statusCode int
 		body       string
 	}{
-		{name: "http error", statusCode: http.StatusBadGateway, body: `{"status":"success","text":"ok"}`},
+		{name: "http error", statusCode: http.StatusBadGateway, body: `{"status":"ok","text":"ok"}`},
 		{name: "invalid json", statusCode: http.StatusOK, body: `{`},
-		{name: "empty result", statusCode: http.StatusOK, body: `{"status":"success"}`},
+		{name: "empty result", statusCode: http.StatusOK, body: `{"status":"ok"}`},
 	}
 
 	for _, testCase := range tests {
@@ -130,7 +159,7 @@ func TestSendMessageHTTPRejectsInvalidResponse(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL, BackendMessagesPath: "/messages"})
+			client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL, BackendMessagesPath: "/api/v1/process"})
 			if err != nil {
 				t.Fatalf("create client: %v", err)
 			}

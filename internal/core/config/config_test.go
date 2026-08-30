@@ -25,7 +25,13 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if settings.AppName != "aide-bot" {
 		t.Fatalf("unexpected app name: %s", settings.AppName)
 	}
-	if settings.RequestTimeout != 10*time.Second {
+	if settings.RequestTimeout != 45*time.Second {
 		t.Fatalf("unexpected request timeout: %s", settings.RequestTimeout)
+	}
+	if settings.BackendMessagesPath != "/api/v1/process" {
+		t.Fatalf("unexpected backend messages path: %s", settings.BackendMessagesPath)
+	}
+	if !settings.BackendStub {
+		t.Fatal("expected backend stub to be enabled by default")
 	}
 }

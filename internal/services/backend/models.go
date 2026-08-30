@@ -17,9 +17,12 @@ type sendMessageResponse struct {
 }
 
 type backendFile struct {
-	Name        string `json:"name"`
-	ContentType string `json:"content_type"`
-	Data        []byte `json:"data"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	URL       string `json:"url"`
+	MIMEType  string `json:"mime_type"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 type ConsultationRequest struct {
