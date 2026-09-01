@@ -78,6 +78,12 @@ func TestSendMessageHTTPWithoutFile(t *testing.T) {
 		if requestBody != (sendMessageRequest{MessageID: "msg-1", Text: "вопрос", ChatID: 77, UserID: 42}) {
 			t.Fatalf("unexpected request body: %+v", requestBody)
 		}
+		if request.Header.Get("X-Trace-ID") != "msg-1" {
+			t.Fatalf("unexpected trace header: %s", request.Header.Get("X-Trace-ID"))
+		}
+		if request.Header.Get("X-Client-Name") != "aide-bot-test" {
+			t.Fatalf("unexpected client header: %s", request.Header.Get("X-Client-Name"))
+		}
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]string{
 			"status": "ok",
@@ -87,6 +93,7 @@ func TestSendMessageHTTPWithoutFile(t *testing.T) {
 	defer server.Close()
 
 	client, err := NewClient(config.Settings{
+		AppName:               "aide-bot-test",
 		BackendAPIBaseURL:     server.URL,
 		BackendMessagesPath:   "/api/v1/process",
 		BackendRequestTimeout: time.Second,

@@ -25,6 +25,7 @@ type BackendClient struct {
 	messagesURL string
 	httpClient  *http.Client
 	logger      *slog.Logger
+	clientName  string
 	stub        bool
 
 	mu     sync.RWMutex
@@ -47,6 +48,12 @@ func NewClient(settings config.Settings, logger *slog.Logger) (*BackendClient, e
 			CheckRedirect: rejectBackendRedirect,
 		},
 		logger: logger,
+		clientName: func() string {
+			if strings.TrimSpace(settings.AppName) != "" {
+				return settings.AppName
+			}
+			return "aide-bot"
+		}(),
 		stub:   settings.BackendStub,
 		status: domain.BackendStatusSuccess,
 	}, nil
@@ -135,6 +142,8 @@ func (c *BackendClient) sendMessageHTTP(ctx context.Context, message domain.Inco
 		return c.errorMessage(message, fmt.Errorf("create backend request: %w", err))
 	}
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Trace-ID", applogging.TraceID(ctx, message.MessageID, message.Target.ChatID, message.Target.UserID))
+	request.Header.Set("X-Client-Name", c.clientName)
 
 	c.logInfo(ctx, message, "backend request sent",
 		"backend.request.sent",
