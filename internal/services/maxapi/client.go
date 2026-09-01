@@ -60,3 +60,34 @@ func (c *Client) SendText(ctx context.Context, target domain.Target, text string
 	_, err := c.api.Messages.Send(ctx, message)
 	return err
 }
+
+func (c *Client) SendMainMenu(ctx context.Context, target domain.Target) error {
+	keyboard := model.NewKeyboard()
+	keyboard.
+		AddRow().
+		AddCallback("Новый чат", model.IntentDefault, CallbackNewChat)
+	keyboard.
+		AddRow().
+		AddCallback("Генерация дизайна(Develop)", model.IntentDefault, CallbackDesignDevelop)
+
+	message := maxbot.NewMessage().
+		SetText("Выберите действие:").
+		AddKeyboard(keyboard)
+	if target.ChatID != 0 {
+		message.SetChat(target.ChatID)
+	}
+	if target.UserID != 0 {
+		message.SetUser(target.UserID)
+	}
+
+	_, err := c.api.Messages.Send(ctx, message)
+	return err
+}
+
+func (c *Client) AnswerCallback(ctx context.Context, callbackID string, text string) error {
+	notification := text
+	_, err := c.api.Messages.AnswerOnCallback(ctx, callbackID, model.CallbackAnswer{
+		Notification: &notification,
+	})
+	return err
+}
