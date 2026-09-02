@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/GogaAPPS/AiDe-Bot/internal/core/config"
@@ -70,6 +71,12 @@ func (a *App) Run(ctx context.Context) error {
 
 		marker = nextMarker
 		for _, update := range updates {
+			if callback, ok := maxapi.CallbackEventFromUpdate(update); ok {
+				if err := a.handleCallback(ctx, callback); err != nil {
+					a.logger.Error("handle callback", "error", err, "payload", callback.Payload)
+				}
+				continue
+			}
 			updateTraceID := applogging.NewTraceID(update.MessageID, update.ChatID, update.UserID)
 			updateCtx := applogging.WithTraceID(ctx, updateTraceID)
 			a.logUpdate(updateCtx, update, "bot.update.received", "bot_update_received", applogging.DirectionIncoming, slog.Any(applogging.FieldBody, update))
@@ -84,6 +91,13 @@ func (a *App) Run(ctx context.Context) error {
 				continue
 			}
 
+			if isStartCommand(message.Text) {
+				if err := a.client.SendMainMenu(ctx, message.Target); err != nil {
+					a.logger.Error("send main menu", "error", err, "chat_id", message.Target.ChatID, "user_id", message.Target.UserID)
+				}
+				continue
+			}
+
 			messageCtx := applogging.WithTraceID(ctx, updateTraceID)
 			a.logMessage(messageCtx, message, slog.LevelInfo, "bot message mapped", "bot.message.mapped", "bot_message_mapped", applogging.DirectionInternal,
 				slog.String(applogging.FieldStatus, "ok"),
@@ -95,6 +109,7 @@ func (a *App) Run(ctx context.Context) error {
 			)
 
 			response, err := a.backend.SendMessage(messageCtx, message)
+
 			if err != nil {
 				a.logMessage(messageCtx, message, slog.LevelError, "backend message", "bot.backend.failed", "bot_backend_failed", applogging.DirectionInternal,
 					slog.String(applogging.FieldStatus, string(domain.BackendStatusError)),
@@ -128,6 +143,34 @@ func (a *App) Run(ctx context.Context) error {
 			)
 		}
 	}
+}
+
+func (a *App) handleCallback(ctx context.Context, callback maxapi.CallbackEvent) error {
+	switch callback.Payload {
+	case maxapi.CallbackNewChat:
+		return a.handleNewChat(ctx, callback)
+	case maxapi.CallbackDesignDevelop:
+		return a.handleDesignDevelop(ctx, callback)
+	default:
+		a.logger.Warn("unknown callback", "payload", callback.Payload)
+		return a.client.AnswerCallback(ctx, callback.ID, "Неизвестное действие")
+	}
+}
+
+// Заглушки для базовых обработчиков колбэков
+
+func (a *App) handleNewChat(ctx context.Context, callback maxapi.CallbackEvent) error {
+	a.logger.Info("new chat button pressed", "chat_id", callback.Target.ChatID, "user_id", callback.Target.UserID)
+	return a.client.AnswerCallback(ctx, callback.ID, "Новый чат: скоро добавим логику")
+}
+
+func (a *App) handleDesignDevelop(ctx context.Context, callback maxapi.CallbackEvent) error {
+	a.logger.Info("design develop button pressed", "chat_id", callback.Target.ChatID, "user_id", callback.Target.UserID)
+	return a.client.AnswerCallback(ctx, callback.ID, "Генерация дизайна: скоро добавим логику")
+}
+
+func isStartCommand(text string) bool {
+	return strings.HasPrefix(strings.TrimSpace(text), "/start")
 }
 
 func sleep(ctx context.Context, duration time.Duration) error {
