@@ -3,6 +3,8 @@ package backend
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,8 +15,12 @@ import (
 	"github.com/GogaAPPS/AiDe-Bot/internal/domain"
 )
 
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
 func TestSendMessageStub(t *testing.T) {
-	client, err := NewClient(config.Settings{BackendStub: true})
+	client, err := NewClient(config.Settings{BackendStub: true}, testLogger())
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -32,7 +38,7 @@ func TestSendMessageStub(t *testing.T) {
 }
 
 func TestSendMessageStubHasOptionalDocument(t *testing.T) {
-	client, err := NewClient(config.Settings{BackendStub: true})
+	client, err := NewClient(config.Settings{BackendStub: true}, testLogger())
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -47,7 +53,7 @@ func TestSendMessageStubHasOptionalDocument(t *testing.T) {
 }
 
 func TestSendMessageContextError(t *testing.T) {
-	client, err := NewClient(config.Settings{BackendStub: true})
+	client, err := NewClient(config.Settings{BackendStub: true}, testLogger())
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -65,6 +71,19 @@ func TestSendMessageHTTPWithoutFile(t *testing.T) {
 		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/process" {
 			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
 		}
+		var requestBody sendMessageRequest
+		if err := json.NewDecoder(request.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if requestBody != (sendMessageRequest{MessageID: "msg-1", Text: "вопрос", ChatID: 77, UserID: 42}) {
+			t.Fatalf("unexpected request body: %+v", requestBody)
+		}
+		if request.Header.Get("X-Trace-ID") != "msg-1" {
+			t.Fatalf("unexpected trace header: %s", request.Header.Get("X-Trace-ID"))
+		}
+		if request.Header.Get("X-Client-Name") != "aide-bot-test" {
+			t.Fatalf("unexpected client header: %s", request.Header.Get("X-Client-Name"))
+		}
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]string{
 			"status": "ok",
@@ -74,15 +93,20 @@ func TestSendMessageHTTPWithoutFile(t *testing.T) {
 	defer server.Close()
 
 	client, err := NewClient(config.Settings{
+		AppName:               "aide-bot-test",
 		BackendAPIBaseURL:     server.URL,
 		BackendMessagesPath:   "/api/v1/process",
 		BackendRequestTimeout: time.Second,
-	})
+	}, testLogger())
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
 
-	response, err := client.SendMessage(context.Background(), domain.IncomingMessage{Text: "вопрос"})
+	response, err := client.SendMessage(context.Background(), domain.IncomingMessage{
+		MessageID: "msg-1",
+		Text:      "вопрос",
+		Target:    domain.Target{ChatID: 77, UserID: 42},
+	})
 	if err != nil || response.Text != "Ответ backend" || response.File != nil {
 		t.Fatalf("unexpected response: %+v, error: %v", response, err)
 	}
@@ -104,7 +128,7 @@ func TestSendMessageHTTPWithFile(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL, BackendMessagesPath: "/api/v1/process"})
+	client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL, BackendMessagesPath: "/api/v1/process"}, testLogger())
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -126,7 +150,7 @@ func TestSendMessageHTTPRejectsRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL, BackendMessagesPath: "/api/v1/process"})
+	client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL, BackendMessagesPath: "/api/v1/process"}, testLogger())
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}
@@ -159,7 +183,7 @@ func TestSendMessageHTTPRejectsInvalidResponse(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL, BackendMessagesPath: "/api/v1/process"})
+			client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL, BackendMessagesPath: "/api/v1/process"}, testLogger())
 			if err != nil {
 				t.Fatalf("create client: %v", err)
 			}
