@@ -116,6 +116,8 @@ func (a *App) handleCallback(ctx context.Context, callback maxapi.CallbackEvent)
 	}
 }
 
+// Заглушки для базовых обработчиков колбэков
+
 func (a *App) handleNewChat(ctx context.Context, callback maxapi.CallbackEvent) error {
 	a.logger.Info("new chat button pressed", "chat_id", callback.Target.ChatID, "user_id", callback.Target.UserID)
 	return a.client.AnswerCallback(ctx, callback.ID, "Новый чат: скоро добавим логику")
