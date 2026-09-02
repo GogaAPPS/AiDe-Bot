@@ -9,12 +9,14 @@ import (
 	"github.com/GogaAPPS/AiDe-Bot/internal/core/config"
 	"github.com/GogaAPPS/AiDe-Bot/internal/domain"
 	"github.com/GogaAPPS/AiDe-Bot/internal/services/backend"
+	"github.com/GogaAPPS/AiDe-Bot/internal/services/inputfilter"
 	"github.com/GogaAPPS/AiDe-Bot/internal/services/maxapi"
 )
 
 type App struct {
 	client  *maxapi.Client
 	backend *backend.BackendClient
+	filter  *inputfilter.Filter
 	logger  *slog.Logger
 	backoff time.Duration
 }
@@ -32,6 +34,7 @@ func New(settings config.Settings, logger *slog.Logger) (*App, error) {
 	return &App{
 		client:  client,
 		backend: backendClient,
+		filter:  inputfilter.New(inputfilter.DefaultOptions()),
 		logger:  logger,
 		backoff: time.Second,
 	}, nil
@@ -72,6 +75,21 @@ func (a *App) Run(ctx context.Context) error {
 			if !ok {
 				continue
 			}
+
+			filtered := a.filter.Check(message)
+			if !filtered.Accepted {
+				a.logger.Info(
+					"message rejected by input filter",
+					"chat_id", message.Target.ChatID,
+					"user_id", message.Target.UserID,
+					"message_id", message.MessageID,
+				)
+				if err := a.client.SendText(ctx, message.Target, filtered.Explanation); err != nil {
+					a.logger.Error("send filter explanation", "error", err, "chat_id", message.Target.ChatID, "user_id", message.Target.UserID)
+				}
+				continue
+			}
+			message = filtered.Message
 
 			response, err := a.backend.SendMessage(ctx, message)
 			if err != nil {
