@@ -109,36 +109,17 @@ func (a *App) Run(ctx context.Context) error {
 
 			filtered := a.filter.Check(message)
 			if !filtered.Accepted {
-				message = filtered.Message
-				reply := domain.OutgoingMessage{Text: filtered.Explanation, Target: message.Target}
 				a.logMessage(messageCtx, message, slog.LevelInfo, "bot message rejected", "bot.message.rejected", "bot_message_rejected", applogging.DirectionInternal,
 					slog.String(applogging.FieldStatus, "rejected"),
 					slog.String("reason", filtered.Explanation),
-					slog.Any(applogging.FieldBody, message),
 				)
-				a.logMessage(messageCtx, message, slog.LevelInfo, "bot filter reply sending", "bot.filter.reply.sending", "bot_filter_reply_sending", applogging.DirectionOutgoing,
-					slog.String(applogging.FieldStatus, "sending"),
-					slog.Any(applogging.FieldBody, reply),
-				)
-				if err := a.client.SendText(messageCtx, message.Target, filtered.Explanation); err != nil {
-					a.logMessage(messageCtx, message, slog.LevelError, "bot filter reply failed", "bot.filter.reply.failed", "bot_filter_reply_failed", applogging.DirectionOutgoing,
-						slog.String(applogging.FieldStatus, string(domain.BackendStatusError)),
-						slog.String(applogging.FieldError, err.Error()),
-						slog.Any(applogging.FieldBody, reply),
-					)
-					continue
+				if err := a.client.SendText(messageCtx, filtered.Message.Target, filtered.Explanation); err != nil {
+					a.logger.Error("send filter explanation", "error", err, "chat_id", message.Target.ChatID, "user_id", message.Target.UserID)
 				}
-				a.logMessage(messageCtx, message, slog.LevelInfo, "bot filter reply sent", "bot.filter.reply.sent", "bot_filter_reply_sent", applogging.DirectionOutgoing,
-					slog.String(applogging.FieldStatus, "ok"),
-					slog.Any(applogging.FieldBody, reply),
-				)
 				continue
 			}
 			message = filtered.Message
-			a.logMessage(messageCtx, message, slog.LevelInfo, "bot message accepted", "bot.message.accepted", "bot_message_accepted", applogging.DirectionInternal,
-				slog.String(applogging.FieldStatus, "ok"),
-				slog.Any(applogging.FieldBody, message),
-			)
+
 			a.logMessage(messageCtx, message, slog.LevelInfo, "bot backend route selected", "bot.backend.route", "bot_backend_route", applogging.DirectionOutgoing,
 				slog.String(applogging.FieldStatus, "selected"),
 				slog.String(applogging.FieldRoute, "backend.process"),
