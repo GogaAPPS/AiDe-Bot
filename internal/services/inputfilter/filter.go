@@ -155,9 +155,6 @@ func noiseExplanation(text string) (string, bool) {
 	if isSingleRuneRepeated(compact) || hasLongRuneRepeat(compact) || hasDominantRune(compact) || isRepeatedPattern(compact) || isLowDiversity(compact) {
 		return "Похоже на повторяющиеся символы. Сформулируйте запрос обычными словами.", true
 	}
-	if isUnpronounceableLetterRun(compact) {
-		return "Похоже на случайный набор букв. Напишите, пожалуйста, осмысленный вопрос.", true
-	}
 
 	return "", false
 }
@@ -273,29 +270,6 @@ func isLowDiversity(text string) bool {
 		unique[r] = struct{}{}
 	}
 	return float64(len(unique))/float64(len(runes)) <= 0.25
-}
-
-func isUnpronounceableLetterRun(text string) bool {
-	if utf8.RuneCountInString(text) < 6 {
-		return false
-	}
-
-	for _, r := range text {
-		if unicode.IsDigit(r) || !unicode.IsLetter(r) {
-			return false
-		}
-		if !unicode.In(r, unicode.Latin, unicode.Cyrillic) {
-			return false
-		}
-		if isVowel(r) {
-			return false
-		}
-	}
-	return true
-}
-
-func isVowel(r rune) bool {
-	return strings.ContainsRune("aeiouyаеёиоуыэюя", unicode.ToLower(r))
 }
 
 func (f *Filter) rejectRepeatedOrFrequent(message domain.IncomingMessage) (string, bool) {

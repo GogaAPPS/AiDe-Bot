@@ -80,8 +80,6 @@ func TestCheckRejectsNoise(t *testing.T) {
 		"аааааб",
 		"абабабаб",
 		"abcabcabc",
-		"bcdfgh",
-		"бвгджз",
 	}
 
 	for _, text := range tests {
@@ -92,6 +90,17 @@ func TestCheckRejectsNoise(t *testing.T) {
 			}
 			if result.Explanation == "" {
 				t.Fatal("expected explanation")
+			}
+		})
+	}
+}
+
+func TestCheckAllowsLetterRunsWithoutRandomTextHeuristic(t *testing.T) {
+	for _, text := range []string{"bcdfgh", "бвгджз"} {
+		t.Run(text, func(t *testing.T) {
+			result := newTestFilter().Check(message(text, 1))
+			if !result.Accepted {
+				t.Fatalf("expected %q to be accepted: %s", text, result.Explanation)
 			}
 		})
 	}
