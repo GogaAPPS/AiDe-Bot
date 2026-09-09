@@ -3,6 +3,8 @@ package bot
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"time"
@@ -17,12 +19,28 @@ import (
 )
 
 type App struct {
-	client  *maxapi.Client
-	backend *backend.BackendClient
+	client  botClient
+	backend botBackend
 	filter  *inputfilter.Filter
 	logger  *slog.Logger
 	backoff time.Duration
 }
+
+type botClient interface {
+	LogBotInfo(context.Context, *slog.Logger) error
+	GetUpdates(context.Context, int64) ([]model.Update, int64, error)
+	SendText(context.Context, domain.Target, string) error
+	SendFile(context.Context, domain.Target, string, io.Reader, int64) error
+	SendMainMenu(context.Context, domain.Target) error
+	AnswerCallback(context.Context, string, string) error
+}
+
+type botBackend interface {
+	SendMessage(context.Context, domain.IncomingMessage) (domain.BackendMessage, error)
+	DownloadFile(context.Context, domain.BackendFile) (backend.FileDownload, error)
+}
+
+const documentDeliveryError = "Не удалось прикрепить документ к сообщению. Попробуйте повторить запрос позже."
 
 func New(settings config.Settings, logger *slog.Logger) (*App, error) {
 	client, err := maxapi.NewClient(settings)
@@ -133,7 +151,7 @@ func (a *App) Run(ctx context.Context) error {
 				)
 				continue
 			}
-			if response.Status != domain.BackendStatusSuccess || response.Text == "" {
+			if response.Status != domain.BackendStatusSuccess || (response.Text == "" && response.File == nil) {
 				a.logMessage(messageCtx, message, slog.LevelInfo, "bot reply skipped", "bot.reply.skipped", "bot_reply_skipped", applogging.DirectionInternal,
 					slog.String(applogging.FieldStatus, string(response.Status)),
 					slog.Any(applogging.FieldBody, response),
@@ -141,24 +159,78 @@ func (a *App) Run(ctx context.Context) error {
 				continue
 			}
 
-			a.logMessage(messageCtx, message, slog.LevelInfo, "bot reply sending", "bot.reply.sending", "bot_reply_sending", applogging.DirectionOutgoing,
-				slog.String(applogging.FieldStatus, "sending"),
-				slog.Any(applogging.FieldBody, domain.OutgoingMessage{Text: response.Text, Target: response.Target}),
+			a.sendBackendResponse(messageCtx, message, response)
+		}
+	}
+}
+
+func (a *App) sendBackendResponse(ctx context.Context, message domain.IncomingMessage, response domain.BackendMessage) {
+	if response.Text != "" {
+		outgoing := domain.OutgoingMessage{Text: response.Text, Target: response.Target}
+		a.logMessage(ctx, message, slog.LevelInfo, "bot reply sending", "bot.reply.sending", "bot_reply_sending", applogging.DirectionOutgoing,
+			slog.String(applogging.FieldStatus, "sending"),
+			slog.Any(applogging.FieldBody, outgoing),
+		)
+		if err := a.client.SendText(ctx, response.Target, response.Text); err != nil {
+			a.logMessage(ctx, message, slog.LevelError, "send message", "bot.reply.failed", "bot_reply_failed", applogging.DirectionOutgoing,
+				slog.String(applogging.FieldStatus, string(domain.BackendStatusError)),
+				slog.String(applogging.FieldError, err.Error()),
+				slog.Any(applogging.FieldBody, outgoing),
 			)
-			if err := a.client.SendText(messageCtx, response.Target, response.Text); err != nil {
-				a.logMessage(messageCtx, message, slog.LevelError, "send message", "bot.reply.failed", "bot_reply_failed", applogging.DirectionOutgoing,
-					slog.String(applogging.FieldStatus, string(domain.BackendStatusError)),
-					slog.String(applogging.FieldError, err.Error()),
-					slog.Any(applogging.FieldBody, domain.OutgoingMessage{Text: response.Text, Target: response.Target}),
-				)
-				continue
-			}
-			a.logMessage(messageCtx, message, slog.LevelInfo, "bot reply sent", "bot.reply.sent", "bot_reply_sent", applogging.DirectionOutgoing,
+		} else {
+			a.logMessage(ctx, message, slog.LevelInfo, "bot reply sent", "bot.reply.sent", "bot_reply_sent", applogging.DirectionOutgoing,
 				slog.String(applogging.FieldStatus, "ok"),
-				slog.Any(applogging.FieldBody, domain.OutgoingMessage{Text: response.Text, Target: response.Target}),
+				slog.Any(applogging.FieldBody, outgoing),
 			)
 		}
 	}
+
+	if response.File == nil {
+		return
+	}
+
+	download, err := a.backend.DownloadFile(ctx, *response.File)
+	if err != nil {
+		a.logDocumentFailure(ctx, message, err)
+		a.sendDocumentFailure(ctx, response.Target)
+		return
+	}
+	if download.Body == nil {
+		a.logDocumentFailure(ctx, message, errors.New("document download body is nil"))
+		a.sendDocumentFailure(ctx, response.Target)
+		return
+	}
+
+	err = a.client.SendFile(ctx, response.Target, response.File.Name, download.Body, download.Size)
+	closeErr := download.Body.Close()
+	if err != nil {
+		a.logDocumentFailure(ctx, message, err)
+		a.sendDocumentFailure(ctx, response.Target)
+		return
+	}
+	if closeErr != nil {
+		a.logDocumentFailure(ctx, message, fmt.Errorf("close document download: %w", closeErr))
+		return
+	}
+
+	a.logMessage(ctx, message, slog.LevelInfo, "bot document sent", "bot.document.sent", "bot_document_sent", applogging.DirectionOutgoing,
+		slog.String(applogging.FieldStatus, "ok"),
+		slog.String("file_name", response.File.Name),
+		slog.Int64("file_size", download.Size),
+	)
+}
+
+func (a *App) sendDocumentFailure(ctx context.Context, target domain.Target) {
+	if err := a.client.SendText(ctx, target, documentDeliveryError); err != nil {
+		a.logger.Error("send document failure notification", "error", err, "chat_id", target.ChatID, "user_id", target.UserID)
+	}
+}
+
+func (a *App) logDocumentFailure(ctx context.Context, message domain.IncomingMessage, err error) {
+	a.logMessage(ctx, message, slog.LevelError, "document delivery failed", "bot.document.failed", "bot_document_failed", applogging.DirectionInternal,
+		slog.String(applogging.FieldStatus, string(domain.BackendStatusError)),
+		slog.String(applogging.FieldError, err.Error()),
+	)
 }
 
 func (a *App) handleCallback(ctx context.Context, callback maxapi.CallbackEvent) error {

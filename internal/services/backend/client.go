@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,11 @@ type BackendClient struct {
 
 	mu     sync.RWMutex
 	status domain.BackendStatus
+}
+
+type FileDownload struct {
+	Body io.ReadCloser
+	Size int64
 }
 
 func NewClient(settings config.Settings, logger *slog.Logger) (*BackendClient, error) {
@@ -98,6 +104,64 @@ func (c *BackendClient) SendMessage(ctx context.Context, message domain.Incoming
 	}
 
 	return c.sendMessageHTTP(ctx, message)
+}
+
+func (c *BackendClient) DownloadFile(ctx context.Context, file domain.BackendFile) (FileDownload, error) {
+	downloadURL, err := resolveBackendURL(c.baseURL, file.URL)
+	if err != nil {
+		return FileDownload{}, err
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return FileDownload{}, fmt.Errorf("create document download request: %w", err)
+	}
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return FileDownload{}, fmt.Errorf("download document: %w", err)
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		_ = response.Body.Close()
+		return FileDownload{}, fmt.Errorf("download document returned HTTP status %d", response.StatusCode)
+	}
+
+	size := response.ContentLength
+	if size < 0 {
+		size = file.SizeBytes
+	}
+	if size < 0 {
+		_ = response.Body.Close()
+		return FileDownload{}, errors.New("document download size is unknown")
+	}
+
+	return FileDownload{Body: response.Body, Size: size}, nil
+}
+
+func resolveBackendURL(baseURL, rawURL string) (string, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return "", errors.New("document URL is empty")
+	}
+
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("parse document URL: %w", err)
+	}
+
+	if !parsedURL.IsAbs() {
+		base, err := url.Parse(baseURL)
+		if err != nil {
+			return "", fmt.Errorf("parse backend base URL: %w", err)
+		}
+		parsedURL = base.ResolveReference(parsedURL)
+	}
+
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return "", fmt.Errorf("unsupported document URL scheme %q", parsedURL.Scheme)
+	}
+
+	return parsedURL.String(), nil
 }
 
 func (c *BackendClient) sendMessageStub(message domain.IncomingMessage) (domain.BackendMessage, error) {

@@ -2,6 +2,8 @@ package maxapi
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -59,6 +61,38 @@ func (c *Client) SendText(ctx context.Context, target domain.Target, text string
 
 	_, err := c.api.Messages.Send(ctx, message)
 	return err
+}
+
+func (c *Client) SendFile(ctx context.Context, target domain.Target, name string, reader io.Reader, size int64) error {
+	if reader == nil {
+		return fmt.Errorf("file reader is nil")
+	}
+	if size < 0 {
+		return fmt.Errorf("file size is negative: %d", size)
+	}
+
+	token, err := c.api.Upload.Upload(ctx, model.UploadFile, reader, name, size)
+	if err != nil {
+		return fmt.Errorf("upload file: %w", err)
+	}
+	if token == "" {
+		return fmt.Errorf("upload file returned an empty token")
+	}
+
+	message := maxbot.NewMessage().AddAttachByToken(token, model.AttachFile)
+	if target.ChatID != 0 {
+		message.SetChat(target.ChatID)
+	}
+	if target.UserID != 0 {
+		message.SetUser(target.UserID)
+	}
+
+	_, err = c.api.Messages.Send(ctx, message)
+	if err != nil {
+		return fmt.Errorf("send file message: %w", err)
+	}
+
+	return nil
 }
 
 func (c *Client) SendMainMenu(ctx context.Context, target domain.Target) error {
