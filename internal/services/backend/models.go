@@ -9,6 +9,10 @@ type sendMessageRequest struct {
 	UserID    int64  `json:"user_id"`
 }
 
+type clearHistoryRequest struct {
+	ConversationID string `json:"conversation_id"`
+}
+
 type sendMessageResponse struct {
 	Status string       `json:"status"`
 	Text   string       `json:"text"`

@@ -22,12 +22,15 @@ import (
 const responseBodyLimit = 1 << 20
 
 type BackendClient struct {
-	baseURL     string
-	messagesURL string
-	httpClient  *http.Client
-	logger      *slog.Logger
-	clientName  string
-	stub        bool
+	baseURL          string
+	messagesURL      string
+	messagesPath     string
+	clearHistoryURL  string
+	clearHistoryPath string
+	httpClient       *http.Client
+	logger           *slog.Logger
+	clientName       string
+	stub             bool
 
 	mu     sync.RWMutex
 	status domain.BackendStatus
@@ -47,8 +50,11 @@ func NewClient(settings config.Settings, logger *slog.Logger) (*BackendClient, e
 	}
 
 	return &BackendClient{
-		baseURL:     strings.TrimRight(settings.BackendAPIBaseURL, "/"),
-		messagesURL: strings.TrimRight(settings.BackendAPIBaseURL, "/") + "/" + strings.TrimLeft(settings.BackendMessagesPath, "/"),
+		baseURL:          strings.TrimRight(settings.BackendAPIBaseURL, "/"),
+		messagesURL:      strings.TrimRight(settings.BackendAPIBaseURL, "/") + "/" + strings.TrimLeft(settings.BackendMessagesPath, "/"),
+		messagesPath:     strings.TrimSpace(settings.BackendMessagesPath),
+		clearHistoryURL:  strings.TrimRight(settings.BackendAPIBaseURL, "/") + "/" + strings.TrimLeft(settings.BackendClearHistoryPath, "/"),
+		clearHistoryPath: strings.TrimSpace(settings.BackendClearHistoryPath),
 		httpClient: &http.Client{
 			Timeout:       settings.BackendRequestTimeout,
 			CheckRedirect: rejectBackendRedirect,
@@ -63,6 +69,147 @@ func NewClient(settings config.Settings, logger *slog.Logger) (*BackendClient, e
 		stub:   settings.BackendStub,
 		status: domain.BackendStatusSuccess,
 	}, nil
+}
+
+func (c *BackendClient) ClearHistory(ctx context.Context, target domain.Target) error {
+	traceID := applogging.TraceID(ctx, "", target.ChatID, target.UserID)
+	ctx = applogging.WithTraceID(ctx, traceID)
+	if err := ctx.Err(); err != nil {
+		c.logClearHistoryFailure(ctx, target, err)
+		c.setState(domain.BackendStatusError)
+		return err
+	}
+	if c.stub {
+		c.logTarget(ctx, target, slog.LevelInfo, "backend clear history skipped in stub mode", "backend.clear_history.skipped", "backend_clear_history_skipped", applogging.DirectionInternal,
+			slog.String(applogging.FieldRoute, "backend.clear_history"),
+			slog.String(applogging.FieldStatus, string(domain.BackendStatusSuccess)),
+		)
+		c.setState(domain.BackendStatusSuccess)
+		return nil
+	}
+	if c.clearHistoryPath == "" {
+		err := errors.New("BACKEND_CLEAR_HISTORY_PATH is required when BACKEND_STUB=false")
+		c.logClearHistoryFailure(ctx, target, err)
+		c.setState(domain.BackendStatusError)
+		return err
+	}
+
+	payload, err := json.Marshal(clearHistoryRequest{
+		ConversationID: fmt.Sprintf("chat_%d_user_%d", target.ChatID, target.UserID),
+	})
+	if err != nil {
+		c.logClearHistoryFailure(ctx, target, err)
+		c.setState(domain.BackendStatusError)
+		return fmt.Errorf("marshal clear history request: %w", err)
+	}
+	c.logTarget(ctx, target, slog.LevelInfo, "backend clear history request prepared", "backend.clear_history.request.prepared", "backend_clear_history_request_prepared", applogging.DirectionOutgoing,
+		slog.String(applogging.FieldRoute, "backend.clear_history"),
+		slog.String(applogging.FieldMethod, http.MethodPost),
+		slog.String(applogging.FieldURL, c.clearHistoryURL),
+		slog.String(applogging.FieldBody, string(payload)),
+	)
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.clearHistoryURL, bytes.NewReader(payload))
+	if err != nil {
+		c.logClearHistoryFailure(ctx, target, err)
+		c.setState(domain.BackendStatusError)
+		return fmt.Errorf("create clear history request: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Trace-ID", traceID)
+	request.Header.Set("X-Client-Name", c.clientName)
+	c.logTarget(ctx, target, slog.LevelInfo, "backend clear history request sent", "backend.clear_history.request.sent", "backend_clear_history_request_sent", applogging.DirectionOutgoing,
+		slog.String(applogging.FieldRoute, "backend.clear_history"),
+		slog.String(applogging.FieldMethod, request.Method),
+		slog.String(applogging.FieldURL, request.URL.String()),
+		slog.Int64("timeout_ms", applogging.DurationMS(c.httpClient.Timeout)),
+	)
+
+	startedAt := time.Now()
+	response, err := c.httpClient.Do(request)
+	duration := time.Since(startedAt)
+	if err != nil {
+		wrappedErr := fmt.Errorf("send clear history request: %w", err)
+		c.logClearHistoryFailure(ctx, target, wrappedErr,
+			slog.String(applogging.FieldRoute, "backend.clear_history"),
+			slog.String(applogging.FieldMethod, request.Method),
+			slog.String(applogging.FieldURL, request.URL.String()),
+			slog.Int64(applogging.FieldDurationMS, applogging.DurationMS(duration)),
+		)
+		c.setState(domain.BackendStatusError)
+		return wrappedErr
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode == http.StatusNoContent {
+		c.logTarget(ctx, target, slog.LevelInfo, "backend clear history response received", "backend.clear_history.response.received", "backend_clear_history_response_received", applogging.DirectionIncoming,
+			slog.String(applogging.FieldRoute, "backend.clear_history"),
+			slog.String(applogging.FieldMethod, request.Method),
+			slog.String(applogging.FieldURL, request.URL.String()),
+			slog.Int(applogging.FieldStatus, response.StatusCode),
+			slog.Int64(applogging.FieldDurationMS, applogging.DurationMS(duration)),
+			slog.String(applogging.FieldBody, ""),
+		)
+		c.logTarget(ctx, target, slog.LevelInfo, "backend clear history completed", "backend.clear_history.completed", "backend_clear_history_completed", applogging.DirectionInternal,
+			slog.String(applogging.FieldRoute, "backend.clear_history"),
+			slog.String(applogging.FieldStatus, string(domain.BackendStatusSuccess)),
+		)
+		c.setState(domain.BackendStatusSuccess)
+		return nil
+	}
+
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, responseBodyLimit))
+	if readErr != nil {
+		wrappedErr := fmt.Errorf("read clear history response: %w", readErr)
+		c.logClearHistoryFailure(ctx, target, wrappedErr,
+			slog.Int("http_status", response.StatusCode),
+			slog.Int64(applogging.FieldDurationMS, applogging.DurationMS(duration)),
+		)
+		c.setState(domain.BackendStatusError)
+		return wrappedErr
+	}
+
+	c.logTarget(ctx, target, slog.LevelInfo, "backend clear history response received", "backend.clear_history.response.received", "backend_clear_history_response_received", applogging.DirectionIncoming,
+		slog.String(applogging.FieldRoute, "backend.clear_history"),
+		slog.String(applogging.FieldMethod, request.Method),
+		slog.String(applogging.FieldURL, request.URL.String()),
+		slog.Int(applogging.FieldStatus, response.StatusCode),
+		slog.Int64(applogging.FieldDurationMS, applogging.DurationMS(duration)),
+		slog.String(applogging.FieldBody, string(body)),
+	)
+
+	err = fmt.Errorf("clear history returned HTTP status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	c.logClearHistoryFailure(ctx, target, err,
+		slog.Int("http_status", response.StatusCode),
+		slog.String(applogging.FieldBody, string(body)),
+	)
+	c.setState(domain.BackendStatusError)
+	return err
+}
+
+func (c *BackendClient) logClearHistoryFailure(ctx context.Context, target domain.Target, err error, extra ...slog.Attr) {
+	c.logTarget(ctx, target, slog.LevelError, "backend clear history failed", "backend.clear_history.failed", "backend_clear_history_failed", applogging.DirectionInternal,
+		append(extra,
+			slog.String(applogging.FieldStatus, string(domain.BackendStatusError)),
+			slog.String(applogging.FieldError, err.Error()),
+		)...,
+	)
+}
+
+func (c *BackendClient) logTarget(
+	ctx context.Context,
+	target domain.Target,
+	level slog.Level,
+	logMessage string,
+	event string,
+	stage string,
+	direction string,
+	extra ...slog.Attr,
+) {
+	traceID := applogging.TraceID(ctx, "", target.ChatID, target.UserID)
+	attrs := applogging.TemplateAttrs(event, stage, direction, traceID, "", target.ChatID, target.UserID)
+	attrs = append(attrs, extra...)
+	c.logger.LogAttrs(ctx, level, logMessage, attrs...)
 }
 
 func rejectBackendRedirect(request *http.Request, previous []*http.Request) error {
@@ -101,6 +248,9 @@ func (c *BackendClient) SendMessage(ctx context.Context, message domain.Incoming
 	}
 	if c.stub {
 		return c.sendMessageStub(message)
+	}
+	if c.messagesPath == "" {
+		return c.errorMessage(message, errors.New("BACKEND_MESSAGES_PATH is required when BACKEND_STUB=false"))
 	}
 
 	return c.sendMessageHTTP(ctx, message)
