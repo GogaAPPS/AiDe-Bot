@@ -139,6 +139,127 @@ func TestSendMessageHTTPWithFile(t *testing.T) {
 	}
 }
 
+func TestDownloadFileResolvesRelativeAndAbsoluteURLs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/documents/file-1/download" {
+			t.Fatalf("unexpected request path: %s", request.URL.Path)
+		}
+		writer.Header().Set("Content-Type", "text/plain")
+		writer.Header().Set("Content-Length", "6")
+		_, _ = writer.Write([]byte("report"))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(config.Settings{
+		BackendAPIBaseURL:     server.URL,
+		BackendMessagesPath:   "/api/v1/process",
+		BackendRequestTimeout: time.Second,
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "relative", url: "/api/v1/documents/file-1/download"},
+		{name: "absolute", url: server.URL + "/api/v1/documents/file-1/download"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			download, err := client.DownloadFile(context.Background(), domain.BackendFile{URL: testCase.url})
+			if err != nil {
+				t.Fatalf("download file: %v", err)
+			}
+			body, err := io.ReadAll(download.Body)
+			if err != nil {
+				t.Fatalf("read file: %v", err)
+			}
+			if err := download.Body.Close(); err != nil {
+				t.Fatalf("close file: %v", err)
+			}
+			if string(body) != "report" || download.Size != 6 {
+				t.Fatalf("unexpected download: body=%q size=%d", body, download.Size)
+			}
+		})
+	}
+}
+
+func TestDownloadFileUsesMetadataSizeWhenHeaderIsMissing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Connection", "close")
+		_, _ = writer.Write([]byte("report"))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL}, testLogger())
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	download, err := client.DownloadFile(context.Background(), domain.BackendFile{
+		URL:       "/download",
+		SizeBytes: 6,
+	})
+	if err != nil {
+		t.Fatalf("download file: %v", err)
+	}
+	defer download.Body.Close()
+	if download.Size != 6 {
+		t.Fatalf("unexpected size: %d", download.Size)
+	}
+}
+
+func TestDownloadFileRejectsErrorsAndInvalidURLs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL}, testLogger())
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		file domain.BackendFile
+	}{
+		{name: "empty URL", file: domain.BackendFile{}},
+		{name: "unsupported scheme", file: domain.BackendFile{URL: "ftp://example.com/file"}},
+		{name: "http error", file: domain.BackendFile{URL: server.URL + "/missing"}},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, err := client.DownloadFile(context.Background(), testCase.file); err == nil {
+				t.Fatal("expected download error")
+			}
+		})
+	}
+}
+
+func TestDownloadFileRejectsRedirect(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		t.Fatal("redirect target should not be called")
+	}))
+	defer target.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, target.URL+"/file", http.StatusFound)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(config.Settings{BackendAPIBaseURL: server.URL}, testLogger())
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	if _, err := client.DownloadFile(context.Background(), domain.BackendFile{URL: "/file"}); err == nil {
+		t.Fatal("expected redirect error")
+	}
+}
+
 func TestSendMessageHTTPRejectsRedirect(t *testing.T) {
 	redirectTarget := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		t.Fatalf("redirect target should not be called: %s %s", request.Method, request.URL.Path)
