@@ -8,9 +8,10 @@ import (
 )
 
 type CallbackEvent struct {
-	ID      string
-	Payload string
-	Target  domain.Target
+	ID        string
+	MessageID string
+	Payload   string
+	Target    domain.Target
 }
 
 func IncomingMessageFromUpdate(update model.Update) (domain.IncomingMessage, bool) {
@@ -35,8 +36,9 @@ func CallbackEventFromUpdate(update model.Update) (CallbackEvent, bool) {
 	}
 
 	return CallbackEvent{
-		ID:      update.Callback.CallbackID,
-		Payload: strings.TrimSpace(update.Callback.Payload),
+		ID:        update.Callback.CallbackID,
+		MessageID: update.MessageID,
+		Payload:   strings.TrimSpace(update.Callback.Payload),
 		Target: domain.Target{
 			ChatID: update.ChatID,
 			UserID: update.UserID,

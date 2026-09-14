@@ -74,7 +74,7 @@ func TestSendMainMenu(t *testing.T) {
 	if keyboard.Type != "inline_keyboard" {
 		t.Fatalf("unexpected attachment type: %s", keyboard.Type)
 	}
-	if len(keyboard.Payload.Buttons) != 2 || len(keyboard.Payload.Buttons[0]) != 1 || len(keyboard.Payload.Buttons[1]) != 1 {
+	if len(keyboard.Payload.Buttons) != 3 || len(keyboard.Payload.Buttons[0]) != 1 || len(keyboard.Payload.Buttons[1]) != 1 || len(keyboard.Payload.Buttons[2]) != 1 {
 		t.Fatalf("unexpected buttons: %+v", keyboard.Payload.Buttons)
 	}
 
@@ -86,6 +86,64 @@ func TestSendMainMenu(t *testing.T) {
 	secondButton := keyboard.Payload.Buttons[1][0]
 	if secondButton.Type != "callback" || secondButton.Text != "Генерация дизайна(Develop)" || secondButton.Payload != CallbackDesignDevelop {
 		t.Fatalf("unexpected second button: %+v", secondButton)
+	}
+
+	backButton := keyboard.Payload.Buttons[2][0]
+	if backButton.Type != "callback" || backButton.Text != "Назад" || backButton.Payload != CallbackBack {
+		t.Fatalf("unexpected back button: %+v", backButton)
+	}
+}
+
+func TestSendTextWithMenu(t *testing.T) {
+	var requestBody struct {
+		Text        string `json:"text"`
+		Attachments []struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Buttons [][]struct {
+					Type    string `json:"type"`
+					Text    string `json:"text"`
+					Payload string `json:"payload"`
+				} `json:"buttons"`
+			} `json:"payload"`
+		} `json:"attachments"`
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/messages" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"message":{"body":{"text":"ok"}}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(config.Settings{
+		MaxBotToken:    "token",
+		MaxAPIBaseURL:  server.URL,
+		RequestTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	if err := client.SendTextWithMenu(context.Background(), domain.Target{ChatID: 42}, "Ответ агента"); err != nil {
+		t.Fatalf("send text with menu: %v", err)
+	}
+
+	if requestBody.Text != "Ответ агента" || len(requestBody.Attachments) != 1 {
+		t.Fatalf("unexpected message: %+v", requestBody)
+	}
+	keyboard := requestBody.Attachments[0]
+	if keyboard.Type != "inline_keyboard" || len(keyboard.Payload.Buttons) != 1 || len(keyboard.Payload.Buttons[0]) != 1 {
+		t.Fatalf("unexpected menu keyboard: %+v", keyboard)
+	}
+	button := keyboard.Payload.Buttons[0][0]
+	if button.Type != "callback" || button.Text != "Меню" || button.Payload != CallbackMainMenu {
+		t.Fatalf("unexpected menu button: %+v", button)
 	}
 }
 
@@ -131,15 +189,28 @@ func TestSendFileUploadsAndSendsAttachment(t *testing.T) {
 				Attachments []struct {
 					Type    string `json:"type"`
 					Payload struct {
-						Token string `json:"token"`
+						Token   string `json:"token"`
+						Buttons [][]struct {
+							Type    string `json:"type"`
+							Text    string `json:"text"`
+							Payload string `json:"payload"`
+						} `json:"buttons"`
 					} `json:"payload"`
 				} `json:"attachments"`
 			}
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Fatalf("decode message: %v", err)
 			}
-			if len(body.Attachments) != 1 || body.Attachments[0].Type != "file" || body.Attachments[0].Payload.Token != "file-token" {
+			if len(body.Attachments) != 2 || body.Attachments[0].Type != "file" || body.Attachments[0].Payload.Token != "file-token" {
 				t.Fatalf("unexpected message attachment: %+v", body.Attachments)
+			}
+			keyboard := body.Attachments[1]
+			if keyboard.Type != "inline_keyboard" || len(keyboard.Payload.Buttons) != 1 || len(keyboard.Payload.Buttons[0]) != 1 {
+				t.Fatalf("unexpected file menu keyboard: %+v", keyboard)
+			}
+			button := keyboard.Payload.Buttons[0][0]
+			if button.Type != "callback" || button.Text != "Меню" || button.Payload != CallbackMainMenu {
+				t.Fatalf("unexpected file menu button: %+v", button)
 			}
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = writer.Write([]byte(`{"message":{"body":{"text":"ok"}}}`))
@@ -158,7 +229,7 @@ func TestSendFileUploadsAndSendsAttachment(t *testing.T) {
 		t.Fatalf("create client: %v", err)
 	}
 
-	err = client.SendFile(context.Background(), domain.Target{ChatID: 42}, "report.xlsx", bytes.NewReader([]byte("content")), 7)
+	err = client.SendFileWithMenu(context.Background(), domain.Target{ChatID: 42}, "report.xlsx", bytes.NewReader([]byte("content")), 7)
 	if err != nil {
 		t.Fatalf("send file: %v", err)
 	}
@@ -183,6 +254,44 @@ func TestSendFileRejectsInvalidInput(t *testing.T) {
 				t.Fatalf("expected file input error, got %v", err)
 			}
 		})
+	}
+}
+
+func TestDeleteMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodDelete || request.URL.Path != "/messages" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+		if request.URL.Query().Get("message_id") != "message-1" {
+			t.Fatalf("unexpected message id: %s", request.URL.RawQuery)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"success":true}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(config.Settings{
+		MaxBotToken:    "token",
+		MaxAPIBaseURL:  server.URL,
+		RequestTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	if err := client.DeleteMessage(context.Background(), "message-1"); err != nil {
+		t.Fatalf("delete message: %v", err)
+	}
+}
+
+func TestDeleteMessageRejectsEmptyID(t *testing.T) {
+	client, err := NewClient(config.Settings{MaxBotToken: "token"})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	if err := client.DeleteMessage(context.Background(), ""); err == nil {
+		t.Fatal("expected empty message id error")
 	}
 }
 
