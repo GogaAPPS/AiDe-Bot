@@ -10,6 +10,7 @@ import (
 
 	"github.com/GogaAPPS/AiDe-Bot/internal/domain"
 	"github.com/GogaAPPS/AiDe-Bot/internal/services/backend"
+	"github.com/GogaAPPS/AiDe-Bot/internal/services/inputfilter"
 	"github.com/GogaAPPS/AiDe-Bot/internal/services/maxapi"
 	"github.com/max-messenger/max-bot-api-client-go/v2/model"
 )
@@ -27,7 +28,6 @@ type fakeBotClient struct {
 	updates       []model.Update
 	textErr       error
 	fileErr       error
-
 }
 
 func (f *fakeBotClient) LogBotInfo(context.Context, *slog.Logger) error { return nil }
@@ -88,6 +88,7 @@ func (f *fakeBotClient) DeleteMessage(_ context.Context, messageID string) error
 	f.deletedIDs = append(f.deletedIDs, messageID)
 	return nil
 
+}
 
 type fakeBotBackend struct {
 	download        backend.FileDownload
