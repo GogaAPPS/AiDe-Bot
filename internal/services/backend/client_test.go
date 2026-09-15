@@ -37,6 +37,164 @@ func TestSendMessageStub(t *testing.T) {
 	}
 }
 
+func TestClearHistoryHTTP(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/clear-history" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+		var requestBody clearHistoryRequest
+		if err := json.NewDecoder(request.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if requestBody.ConversationID != "chat_77_user_42" {
+			t.Fatalf("unexpected conversation id: %q", requestBody.ConversationID)
+		}
+		if request.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("unexpected content type: %q", request.Header.Get("Content-Type"))
+		}
+		if request.Header.Get("X-Trace-ID") == "" {
+			t.Fatal("expected trace id header")
+		}
+		if request.Header.Get("X-Client-Name") != "aide-bot-test" {
+			t.Fatalf("unexpected client name: %q", request.Header.Get("X-Client-Name"))
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(config.Settings{
+		AppName:                 "aide-bot-test",
+		BackendAPIBaseURL:       server.URL,
+		BackendClearHistoryPath: "/api/v1/clear-history",
+		BackendRequestTimeout:   time.Second,
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	if err := client.ClearHistory(context.Background(), domain.Target{ChatID: 77, UserID: 42}); err != nil {
+		t.Fatalf("clear history: %v", err)
+	}
+	if client.State() != domain.BackendStatusSuccess {
+		t.Fatalf("unexpected client state: %s", client.State())
+	}
+}
+
+func TestClearHistoryStub(t *testing.T) {
+	client, err := NewClient(config.Settings{BackendStub: true}, testLogger())
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	if err := client.ClearHistory(context.Background(), domain.Target{ChatID: 77, UserID: 42}); err != nil {
+		t.Fatalf("clear history: %v", err)
+	}
+	if client.State() != domain.BackendStatusSuccess {
+		t.Fatalf("unexpected client state: %s", client.State())
+	}
+}
+
+func TestClearHistoryRequiresConfiguredPath(t *testing.T) {
+	client, err := NewClient(config.Settings{
+		BackendAPIBaseURL: "http://backend",
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	if err := client.ClearHistory(context.Background(), domain.Target{ChatID: 77, UserID: 42}); err == nil {
+		t.Fatal("expected missing clear history path error")
+	}
+}
+
+func TestClearHistoryHTTPRejectsUnexpectedResponses(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+	}{
+		{name: "ok with body", statusCode: http.StatusOK, body: `{"status":"ok"}`},
+		{name: "validation error", statusCode: http.StatusUnprocessableEntity, body: `{"code":"validation_error"}`},
+		{name: "internal error", statusCode: http.StatusInternalServerError, body: `{"code":"internal_error"}`},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.WriteHeader(testCase.statusCode)
+				_, _ = writer.Write([]byte(testCase.body))
+			}))
+			defer server.Close()
+
+			client, err := NewClient(config.Settings{
+				BackendAPIBaseURL:       server.URL,
+				BackendClearHistoryPath: "/api/v1/clear-history",
+				BackendRequestTimeout:   time.Second,
+			}, testLogger())
+			if err != nil {
+				t.Fatalf("create client: %v", err)
+			}
+			if err := client.ClearHistory(context.Background(), domain.Target{ChatID: 77, UserID: 42}); err == nil {
+				t.Fatal("expected clear history error")
+			}
+		})
+	}
+}
+
+func TestClearHistoryHTTPRejectsInvalidURL(t *testing.T) {
+	client, err := NewClient(config.Settings{
+		BackendAPIBaseURL:       "://invalid",
+		BackendClearHistoryPath: "/api/v1/clear-history",
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if err := client.ClearHistory(context.Background(), domain.Target{ChatID: 77, UserID: 42}); err == nil {
+		t.Fatal("expected invalid URL error")
+	}
+}
+
+func TestClearHistoryHTTPRejectsNetworkError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	serverURL := server.URL
+	server.Close()
+
+	client, err := NewClient(config.Settings{
+		BackendAPIBaseURL:       serverURL,
+		BackendClearHistoryPath: "/api/v1/clear-history",
+		BackendRequestTimeout:   time.Second,
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if err := client.ClearHistory(context.Background(), domain.Target{ChatID: 77, UserID: 42}); err == nil {
+		t.Fatal("expected network error")
+	}
+}
+
+func TestClearHistoryHTTPRejectsRedirect(t *testing.T) {
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		t.Fatalf("redirect target should not be called: %s %s", request.Method, request.URL.Path)
+	}))
+	defer redirectTarget.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, redirectTarget.URL+"/api/v1/clear-history", http.StatusFound)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(config.Settings{
+		BackendAPIBaseURL:       server.URL,
+		BackendClearHistoryPath: "/api/v1/clear-history",
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if err := client.ClearHistory(context.Background(), domain.Target{ChatID: 77, UserID: 42}); err == nil {
+		t.Fatal("expected redirect error")
+	}
+}
+
 func TestSendMessageStubHasOptionalDocument(t *testing.T) {
 	client, err := NewClient(config.Settings{BackendStub: true}, testLogger())
 	if err != nil {
@@ -63,6 +221,20 @@ func TestSendMessageContextError(t *testing.T) {
 	response, err := client.SendMessage(ctx, domain.IncomingMessage{})
 	if err == nil || response.Status != domain.BackendStatusError || client.State() != domain.BackendStatusError {
 		t.Fatalf("expected backend error: response=%+v error=%v status=%s", response, err, client.State())
+	}
+}
+
+func TestSendMessageHTTPRequiresConfiguredPath(t *testing.T) {
+	client, err := NewClient(config.Settings{
+		BackendAPIBaseURL: "http://backend",
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	response, err := client.SendMessage(context.Background(), domain.IncomingMessage{Text: "вопрос"})
+	if err == nil || response.Status != domain.BackendStatusError {
+		t.Fatalf("expected missing messages path error: response=%+v error=%v", response, err)
 	}
 }
 

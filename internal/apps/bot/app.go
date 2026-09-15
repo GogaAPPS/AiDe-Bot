@@ -40,10 +40,16 @@ type botClient interface {
 
 type botBackend interface {
 	SendMessage(context.Context, domain.IncomingMessage) (domain.BackendMessage, error)
+	ClearHistory(context.Context, domain.Target) error
 	DownloadFile(context.Context, domain.BackendFile) (backend.FileDownload, error)
 }
 
 const documentDeliveryError = "Не удалось прикрепить документ к сообщению. Попробуйте повторить запрос позже."
+
+const (
+	newChatSuccessMessage     = "История очищена"
+	serviceUnavailableMessage = "Сервис недоступен"
+)
 
 func New(settings config.Settings, logger *slog.Logger) (*App, error) {
 	client, err := maxapi.NewClient(settings)
@@ -276,7 +282,32 @@ func (a *App) handleBack(ctx context.Context, callback maxapi.CallbackEvent) err
 
 func (a *App) handleNewChat(ctx context.Context, callback maxapi.CallbackEvent) error {
 	a.logger.Info("new chat button pressed", "chat_id", callback.Target.ChatID, "user_id", callback.Target.UserID)
-	return a.client.AnswerCallback(ctx, callback.ID, "Новый чат: скоро добавим логику")
+	if err := a.backend.ClearHistory(ctx, callback.Target); err != nil {
+		a.logger.Error("clear chat history failed", "error", err, "chat_id", callback.Target.ChatID, "user_id", callback.Target.UserID)
+		return a.finishNewChat(ctx, callback, serviceUnavailableMessage)
+	}
+
+	a.logger.Info("clear chat history succeeded", "chat_id", callback.Target.ChatID, "user_id", callback.Target.UserID)
+	return a.finishNewChat(ctx, callback, newChatSuccessMessage)
+}
+
+func (a *App) finishNewChat(ctx context.Context, callback maxapi.CallbackEvent, text string) error {
+	a.logger.Info("new chat notification sending", "chat_id", callback.Target.ChatID, "user_id", callback.Target.UserID, "text", text)
+	sendErr := a.client.SendText(ctx, callback.Target, text)
+	if sendErr != nil {
+		a.logger.Error("new chat notification failed", "error", sendErr, "chat_id", callback.Target.ChatID, "user_id", callback.Target.UserID, "text", text)
+	} else {
+		a.logger.Info("new chat notification sent", "chat_id", callback.Target.ChatID, "user_id", callback.Target.UserID, "text", text)
+	}
+
+	callbackErr := a.client.AnswerCallback(ctx, callback.ID, text)
+	if callbackErr != nil {
+		a.logger.Error("new chat callback answer failed", "error", callbackErr, "callback_id", callback.ID, "chat_id", callback.Target.ChatID, "user_id", callback.Target.UserID, "text", text)
+	} else {
+		a.logger.Info("new chat callback answered", "callback_id", callback.ID, "chat_id", callback.Target.ChatID, "user_id", callback.Target.UserID, "text", text)
+	}
+
+	return errors.Join(sendErr, callbackErr)
 }
 
 func (a *App) handleDesignDevelop(ctx context.Context, callback maxapi.CallbackEvent) error {

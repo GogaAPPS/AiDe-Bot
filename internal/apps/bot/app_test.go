@@ -10,7 +10,6 @@ import (
 
 	"github.com/GogaAPPS/AiDe-Bot/internal/domain"
 	"github.com/GogaAPPS/AiDe-Bot/internal/services/backend"
-	"github.com/GogaAPPS/AiDe-Bot/internal/services/inputfilter"
 	"github.com/GogaAPPS/AiDe-Bot/internal/services/maxapi"
 	"github.com/max-messenger/max-bot-api-client-go/v2/model"
 )
@@ -28,6 +27,7 @@ type fakeBotClient struct {
 	updates       []model.Update
 	textErr       error
 	fileErr       error
+
 }
 
 func (f *fakeBotClient) LogBotInfo(context.Context, *slog.Logger) error { return nil }
@@ -87,15 +87,22 @@ func (f *fakeBotClient) AnswerCallback(_ context.Context, callbackID string, tex
 func (f *fakeBotClient) DeleteMessage(_ context.Context, messageID string) error {
 	f.deletedIDs = append(f.deletedIDs, messageID)
 	return nil
-}
+
 
 type fakeBotBackend struct {
-	download    backend.FileDownload
-	downloadErr error
+	download        backend.FileDownload
+	downloadErr     error
+	clearTargets    []domain.Target
+	clearHistoryErr error
 }
 
 func (f *fakeBotBackend) SendMessage(context.Context, domain.IncomingMessage) (domain.BackendMessage, error) {
 	return domain.BackendMessage{}, nil
+}
+
+func (f *fakeBotBackend) ClearHistory(_ context.Context, target domain.Target) error {
+	f.clearTargets = append(f.clearTargets, target)
+	return f.clearHistoryErr
 }
 
 func (f *fakeBotBackend) DownloadFile(context.Context, domain.BackendFile) (backend.FileDownload, error) {
@@ -146,6 +153,46 @@ func TestSendBackendResponseSendsTextWithMenu(t *testing.T) {
 
 	if len(client.textsWithMenu) != 1 || client.textsWithMenu[0] != "Ответ агента" {
 		t.Fatalf("expected text response with menu: %v", client.textsWithMenu)
+	}
+}
+
+func TestHandleNewChatClearsHistoryAndAcknowledgesSuccess(t *testing.T) {
+	client := &fakeBotClient{}
+	backendClient := &fakeBotBackend{}
+	app := newTestApp(client, backendClient)
+
+	err := app.handleNewChat(context.Background(), maxapi.CallbackEvent{
+		ID:     "callback-1",
+		Target: domain.Target{ChatID: 77, UserID: 42},
+	})
+	if err != nil {
+		t.Fatalf("handle new chat: %v", err)
+	}
+	if len(backendClient.clearTargets) != 1 || backendClient.clearTargets[0] != (domain.Target{ChatID: 77, UserID: 42}) {
+		t.Fatalf("unexpected clear history targets: %+v", backendClient.clearTargets)
+	}
+	if len(client.texts) != 1 || client.texts[0] != newChatSuccessMessage {
+		t.Fatalf("unexpected chat messages: %v", client.texts)
+	}
+	if len(client.callbackTexts) != 1 || client.callbackIDs[0] != "callback-1" || client.callbackTexts[0] != "История очищена" {
+		t.Fatalf("unexpected callback response: ids=%v texts=%v", client.callbackIDs, client.callbackTexts)
+	}
+}
+
+func TestHandleNewChatAcknowledgesFailure(t *testing.T) {
+	client := &fakeBotClient{}
+	backendClient := &fakeBotBackend{clearHistoryErr: io.ErrUnexpectedEOF}
+	app := newTestApp(client, backendClient)
+
+	err := app.handleNewChat(context.Background(), maxapi.CallbackEvent{ID: "callback-2"})
+	if err != nil {
+		t.Fatalf("handle new chat: %v", err)
+	}
+	if len(client.texts) != 1 || client.texts[0] != serviceUnavailableMessage {
+		t.Fatalf("unexpected chat messages: %v", client.texts)
+	}
+	if len(client.callbackTexts) != 1 || client.callbackTexts[0] != serviceUnavailableMessage {
+		t.Fatalf("unexpected callback response: %v", client.callbackTexts)
 	}
 }
 
