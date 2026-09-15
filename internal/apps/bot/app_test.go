@@ -9,15 +9,19 @@ import (
 
 	"github.com/GogaAPPS/AiDe-Bot/internal/domain"
 	"github.com/GogaAPPS/AiDe-Bot/internal/services/backend"
+	"github.com/GogaAPPS/AiDe-Bot/internal/services/maxapi"
 	"github.com/max-messenger/max-bot-api-client-go/v2/model"
 )
 
 type fakeBotClient struct {
-	texts     []string
-	files     []string
-	fileNames []string
-	textErr   error
-	fileErr   error
+	texts             []string
+	files             []string
+	fileNames         []string
+	callbackTexts     []string
+	callbackIDs       []string
+	textErr           error
+	fileErr           error
+	answerCallbackErr error
 }
 
 func (f *fakeBotClient) LogBotInfo(context.Context, *slog.Logger) error { return nil }
@@ -43,15 +47,26 @@ func (f *fakeBotClient) SendFile(_ context.Context, _ domain.Target, name string
 
 func (f *fakeBotClient) SendMainMenu(context.Context, domain.Target) error { return nil }
 
-func (f *fakeBotClient) AnswerCallback(context.Context, string, string) error { return nil }
+func (f *fakeBotClient) AnswerCallback(_ context.Context, callbackID, text string) error {
+	f.callbackIDs = append(f.callbackIDs, callbackID)
+	f.callbackTexts = append(f.callbackTexts, text)
+	return f.answerCallbackErr
+}
 
 type fakeBotBackend struct {
-	download    backend.FileDownload
-	downloadErr error
+	download        backend.FileDownload
+	downloadErr     error
+	clearTargets    []domain.Target
+	clearHistoryErr error
 }
 
 func (f *fakeBotBackend) SendMessage(context.Context, domain.IncomingMessage) (domain.BackendMessage, error) {
 	return domain.BackendMessage{}, nil
+}
+
+func (f *fakeBotBackend) ClearHistory(_ context.Context, target domain.Target) error {
+	f.clearTargets = append(f.clearTargets, target)
+	return f.clearHistoryErr
 }
 
 func (f *fakeBotBackend) DownloadFile(context.Context, domain.BackendFile) (backend.FileDownload, error) {
@@ -84,6 +99,46 @@ func TestSendBackendResponseSendsTextAndFileSeparately(t *testing.T) {
 	}
 	if len(client.files) != 1 || client.files[0] != "report" || client.fileNames[0] != "report.xlsx" {
 		t.Fatalf("unexpected file messages: names=%v files=%v", client.fileNames, client.files)
+	}
+}
+
+func TestHandleNewChatClearsHistoryAndAcknowledgesSuccess(t *testing.T) {
+	client := &fakeBotClient{}
+	backendClient := &fakeBotBackend{}
+	app := newTestApp(client, backendClient)
+
+	err := app.handleNewChat(context.Background(), maxapi.CallbackEvent{
+		ID:     "callback-1",
+		Target: domain.Target{ChatID: 77, UserID: 42},
+	})
+	if err != nil {
+		t.Fatalf("handle new chat: %v", err)
+	}
+	if len(backendClient.clearTargets) != 1 || backendClient.clearTargets[0] != (domain.Target{ChatID: 77, UserID: 42}) {
+		t.Fatalf("unexpected clear history targets: %+v", backendClient.clearTargets)
+	}
+	if len(client.texts) != 1 || client.texts[0] != newChatSuccessMessage {
+		t.Fatalf("unexpected chat messages: %v", client.texts)
+	}
+	if len(client.callbackTexts) != 1 || client.callbackIDs[0] != "callback-1" || client.callbackTexts[0] != "История очищена" {
+		t.Fatalf("unexpected callback response: ids=%v texts=%v", client.callbackIDs, client.callbackTexts)
+	}
+}
+
+func TestHandleNewChatAcknowledgesFailure(t *testing.T) {
+	client := &fakeBotClient{}
+	backendClient := &fakeBotBackend{clearHistoryErr: io.ErrUnexpectedEOF}
+	app := newTestApp(client, backendClient)
+
+	err := app.handleNewChat(context.Background(), maxapi.CallbackEvent{ID: "callback-2"})
+	if err != nil {
+		t.Fatalf("handle new chat: %v", err)
+	}
+	if len(client.texts) != 1 || client.texts[0] != serviceUnavailableMessage {
+		t.Fatalf("unexpected chat messages: %v", client.texts)
+	}
+	if len(client.callbackTexts) != 1 || client.callbackTexts[0] != serviceUnavailableMessage {
+		t.Fatalf("unexpected callback response: %v", client.callbackTexts)
 	}
 }
 
