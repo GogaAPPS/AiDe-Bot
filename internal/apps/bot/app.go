@@ -30,9 +30,12 @@ type botClient interface {
 	LogBotInfo(context.Context, *slog.Logger) error
 	GetUpdates(context.Context, int64) ([]model.Update, int64, error)
 	SendText(context.Context, domain.Target, string) error
+	SendTextWithMenu(context.Context, domain.Target, string) error
 	SendFile(context.Context, domain.Target, string, io.Reader, int64) error
+	SendFileWithMenu(context.Context, domain.Target, string, io.Reader, int64) error
 	SendMainMenu(context.Context, domain.Target) error
 	AnswerCallback(context.Context, string, string) error
+	DeleteMessage(context.Context, string) error
 }
 
 type botBackend interface {
@@ -137,7 +140,7 @@ func (a *App) Run(ctx context.Context) error {
 					slog.String(applogging.FieldStatus, "rejected"),
 					slog.String("reason", filtered.Explanation),
 				)
-				if err := a.client.SendText(messageCtx, filtered.Message.Target, filtered.Explanation); err != nil {
+				if err := a.client.SendTextWithMenu(messageCtx, filtered.Message.Target, filtered.Explanation); err != nil {
 					a.logger.Error("send filter explanation", "error", err, "chat_id", message.Target.ChatID, "user_id", message.Target.UserID)
 				}
 				continue
@@ -177,7 +180,11 @@ func (a *App) sendBackendResponse(ctx context.Context, message domain.IncomingMe
 			slog.String(applogging.FieldStatus, "sending"),
 			slog.Any(applogging.FieldBody, outgoing),
 		)
-		if err := a.client.SendText(ctx, response.Target, response.Text); err != nil {
+		sendText := a.client.SendText
+		if response.File == nil {
+			sendText = a.client.SendTextWithMenu
+		}
+		if err := sendText(ctx, response.Target, response.Text); err != nil {
 			a.logMessage(ctx, message, slog.LevelError, "send message", "bot.reply.failed", "bot_reply_failed", applogging.DirectionOutgoing,
 				slog.String(applogging.FieldStatus, string(domain.BackendStatusError)),
 				slog.String(applogging.FieldError, err.Error()),
@@ -207,7 +214,7 @@ func (a *App) sendBackendResponse(ctx context.Context, message domain.IncomingMe
 		return
 	}
 
-	err = a.client.SendFile(ctx, response.Target, response.File.Name, download.Body, download.Size)
+	err = a.client.SendFileWithMenu(ctx, response.Target, response.File.Name, download.Body, download.Size)
 	closeErr := download.Body.Close()
 	if err != nil {
 		a.logDocumentFailure(ctx, message, err)
@@ -227,7 +234,7 @@ func (a *App) sendBackendResponse(ctx context.Context, message domain.IncomingMe
 }
 
 func (a *App) sendDocumentFailure(ctx context.Context, target domain.Target) {
-	if err := a.client.SendText(ctx, target, documentDeliveryError); err != nil {
+	if err := a.client.SendTextWithMenu(ctx, target, documentDeliveryError); err != nil {
 		a.logger.Error("send document failure notification", "error", err, "chat_id", target.ChatID, "user_id", target.UserID)
 	}
 }
@@ -241,6 +248,10 @@ func (a *App) logDocumentFailure(ctx context.Context, message domain.IncomingMes
 
 func (a *App) handleCallback(ctx context.Context, callback maxapi.CallbackEvent) error {
 	switch callback.Payload {
+	case maxapi.CallbackMainMenu:
+		return a.handleMainMenu(ctx, callback)
+	case maxapi.CallbackBack:
+		return a.handleBack(ctx, callback)
 	case maxapi.CallbackNewChat:
 		return a.handleNewChat(ctx, callback)
 	case maxapi.CallbackDesignDevelop:
@@ -249,6 +260,22 @@ func (a *App) handleCallback(ctx context.Context, callback maxapi.CallbackEvent)
 		a.logger.Warn("unknown callback", "payload", callback.Payload)
 		return a.client.AnswerCallback(ctx, callback.ID, "Неизвестное действие")
 	}
+}
+
+func (a *App) handleMainMenu(ctx context.Context, callback maxapi.CallbackEvent) error {
+	if err := a.client.AnswerCallback(ctx, callback.ID, ""); err != nil {
+		return err
+	}
+
+	return a.client.SendMainMenu(ctx, callback.Target)
+}
+
+func (a *App) handleBack(ctx context.Context, callback maxapi.CallbackEvent) error {
+	if err := a.client.AnswerCallback(ctx, callback.ID, ""); err != nil {
+		return err
+	}
+
+	return a.client.DeleteMessage(ctx, callback.MessageID)
 }
 
 // Заглушки для базовых обработчиков колбэков

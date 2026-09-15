@@ -9,6 +9,7 @@ import (
 func TestCallbackEventFromUpdate(t *testing.T) {
 	update := model.Update{
 		UpdateType: model.UpdateMessageCallback,
+		MessageID:  "message-1",
 		ChatID:     42,
 		UserID:     7,
 		Callback: &model.Callback{
@@ -21,7 +22,7 @@ func TestCallbackEventFromUpdate(t *testing.T) {
 	if !ok {
 		t.Fatal("expected callback event")
 	}
-	if callback.ID != "callback-1" || callback.Payload != CallbackNewChat {
+	if callback.ID != "callback-1" || callback.MessageID != "message-1" || callback.Payload != CallbackNewChat {
 		t.Fatalf("unexpected callback: %+v", callback)
 	}
 	if callback.Target.ChatID != 42 || callback.Target.UserID != 7 {
