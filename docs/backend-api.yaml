@@ -1,0 +1,351 @@
+openapi: 3.1.0
+info:
+  title: AiDe Backend API
+  version: 1.0.0
+  description: |
+    HTTP-контракт между AiDe Bot и AiDe Backend. Бот передаёт сообщения на обработку,
+    очищает историю диалога и скачивает созданные backend документы. Отдельная
+    авторизация для этих маршрутов не требуется.
+servers:
+  - url: https://api-aide.icho.su
+    description: Публичный backend, используемый в AiDe-Bot/.env.example
+  - url: http://localhost:8000
+    description: Локальный backend
+tags:
+  - name: health
+    description: Проверка доступности HTTP-сервиса
+  - name: messages
+    description: Обработка сообщений и история диалогов
+  - name: documents
+    description: Скачивание созданных документов
+paths:
+  /:
+    get:
+      tags: [health]
+      operationId: rootHealthCheck
+      summary: Проверить, что HTTP-сервис отвечает
+      responses:
+        '200':
+          description: Сервис доступен
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /health:
+    get:
+      tags: [health]
+      operationId: healthCheck
+      summary: Получить состояние backend API
+      responses:
+        '200':
+          description: Backend запущен и принимает запросы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+                service: aide-backend
+
+  /api/v1/process:
+    post:
+      tags: [messages]
+      operationId: processMessage
+      summary: Передать сообщение пользователя в backend
+      description: |
+        Бот вызывает этот метод для каждого входящего сообщения. История и состояние
+        сметы хранятся на backend и связываются парой chat_id/user_id.
+      parameters:
+        - $ref: '#/components/parameters/TraceId'
+        - $ref: '#/components/parameters/ClientName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProcessRequest'
+            example:
+              message_id: message-1
+              text: Как составить заявление?
+              chat_id: 77
+              user_id: 42
+      responses:
+        '200':
+          description: Сообщение обработано; поле file заполнено, если создан документ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessResponse'
+              examples:
+                textAnswer:
+                  summary: Текстовый ответ
+                  value:
+                    status: ok
+                    text: Ответ консультационного помощника
+                    file: null
+                    error: ''
+                documentAnswer:
+                  summary: Ответ со ссылкой на документ
+                  value:
+                    status: ok
+                    text: "Документ создан: report.docx"
+                    file:
+                      id: abc123
+                      name: report.docx
+                      path: null
+                      url: /api/v1/documents/abc123/download
+                      mime_type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+                      size_bytes: 42138
+                    error: ''
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '502':
+          $ref: '#/components/responses/BackendDependencyError'
+        '504':
+          $ref: '#/components/responses/BackendTimeout'
+        default:
+          $ref: '#/components/responses/UnexpectedError'
+
+  /api/v1/clear-history:
+    post:
+      tags: [messages]
+      operationId: clearHistory
+      summary: Очистить историю диалога пользователя
+      description: |
+        Бот формирует conversation_id по шаблону
+        `chat_{chat_id}_user_{user_id}`. Успешный ответ не содержит тела.
+      parameters:
+        - $ref: '#/components/parameters/TraceId'
+        - $ref: '#/components/parameters/ClientName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClearHistoryRequest'
+            example:
+              conversation_id: chat_77_user_42
+      responses:
+        '204':
+          description: История очищена
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        default:
+          $ref: '#/components/responses/UnexpectedError'
+
+  /api/v1/documents/{document_id}/download:
+    get:
+      tags: [documents]
+      operationId: downloadDocument
+      summary: Скачать документ, созданный backend
+      description: |
+        Бот получает относительный или абсолютный URL из file.url и скачивает файл
+        через этот маршрут. Поле file.path является внутренним и клиентом не используется.
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          description: Идентификатор из поля file.id
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Содержимое документа; backend передаёт MIME type и имя файла
+          headers:
+            Content-Disposition:
+              description: Имя файла для сохранения, если передано генератором документов
+              schema:
+                type: string
+            Content-Length:
+              description: Размер файла в байтах, если известен
+              schema:
+                type: integer
+                format: int64
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/DocumentNotFound'
+        '502':
+          $ref: '#/components/responses/DocumentDownloadError'
+        '504':
+          $ref: '#/components/responses/BackendTimeout'
+        default:
+          $ref: '#/components/responses/UnexpectedError'
+
+components:
+  parameters:
+    TraceId:
+      name: X-Trace-ID
+      in: header
+      required: false
+      description: Идентификатор трассировки, который бот передаёт для диагностики
+      schema:
+        type: string
+    ClientName:
+      name: X-Client-Name
+      in: header
+      required: false
+      description: Имя вызывающего клиента, например aide-bot
+      schema:
+        type: string
+  schemas:
+    ProcessRequest:
+      type: object
+      additionalProperties: false
+      required: [message_id, text, chat_id, user_id]
+      properties:
+        message_id:
+          type: string
+          minLength: 1
+          description: ID исходного сообщения в MAX
+        text:
+          type: string
+          minLength: 1
+          description: Текст пользователя
+        chat_id:
+          type: integer
+          format: int64
+          description: ID чата MAX
+        user_id:
+          type: integer
+          format: int64
+          description: ID пользователя MAX
+    ProcessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, error]
+        text:
+          type: string
+          description: Текст для отправки пользователю
+        file:
+          oneOf:
+            - $ref: '#/components/schemas/BackendFile'
+            - type: 'null'
+        error:
+          type: string
+        estimate_status:
+          type: string
+          description: Текущее состояние сценария формирования сметы; отсутствует, если сценарий не запускался
+          enum:
+            - new
+            - collecting_data
+            - waiting_user
+            - validation
+            - ready_for_calculation
+            - calculating
+            - generated
+            - needs_revision
+            - failed
+    BackendFile:
+      type: object
+      properties:
+        id:
+          type: [string, 'null']
+        name:
+          type: [string, 'null']
+        path:
+          type: [string, 'null']
+          description: Внутренний путь; бот его не использует
+        url:
+          type: [string, 'null']
+          description: URL скачивания; может быть относительным
+        mime_type:
+          type: [string, 'null']
+        size_bytes:
+          type: [integer, 'null']
+          format: int64
+    ClearHistoryRequest:
+      type: object
+      additionalProperties: false
+      required: [conversation_id]
+      properties:
+        conversation_id:
+          type: string
+          minLength: 1
+          pattern: '\S'
+          description: ID диалога в формате chat_{chat_id}_user_{user_id}
+    HealthResponse:
+      type: object
+      required: [status, service]
+      properties:
+        status:
+          type: string
+          const: ok
+        service:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [code, message, details]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+  responses:
+    ValidationError:
+      description: Запрос не прошёл валидацию
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: validation_error
+            message: Request validation failed
+            details:
+              errors: []
+    BackendDependencyError:
+      description: LLM или другой backend-сервис недоступен либо вернул некорректный ответ
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: llm_unavailable
+            message: Модель или провайдер недоступны
+            details: {}
+    BackendTimeout:
+      description: Истекло время ожидания backend-сервиса
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: llm_timeout
+            message: Превышено время ожидания ответа модели
+            details: {}
+    DocumentNotFound:
+      description: Документ с таким идентификатором не найден
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: document_not_found
+            message: Документ не найден
+            details: {}
+    DocumentDownloadError:
+      description: Сервис генерации документов недоступен
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: document_download_unavailable
+            message: Скачивание документа недоступно
+            details: {}
+    UnexpectedError:
+      description: Непредвиденная ошибка backend
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

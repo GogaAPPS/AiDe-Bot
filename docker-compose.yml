@@ -5,14 +5,15 @@ services:
       APP_NAME: ${APP_NAME:-aide-bot}
       APP_ENV: ${APP_ENV:-local}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-change-me}
-      MAX_API_BASE_URL: ${MAX_API_BASE_URL:-}
+      # Empty token is allowed for config-only CI checks; the bot validates it at startup.
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
+      MAX_API_BASE_URL: ${MAX_API_BASE_URL:-https://platform-api2.max.ru/}
       MAX_REQUEST_TIMEOUT: ${MAX_REQUEST_TIMEOUT:-45s}
       MAX_POLLING_PAUSE: ${MAX_POLLING_PAUSE:-500ms}
       MAX_POLLING_TIMEOUT: ${MAX_POLLING_TIMEOUT:-30s}
-      BACKEND_API_BASE_URL: ${BACKEND_API_BASE_URL:-http://localhost:8000}
-      BACKEND_CLEAR_HISTORY_PATH: ${BACKEND_CLEAR_HISTORY_PATH}
-      BACKEND_MESSAGES_PATH: ${BACKEND_MESSAGES_PATH}
-      BACKEND_STUB: ${BACKEND_STUB:-true}
+      BACKEND_API_BASE_URL: ${BACKEND_API_BASE_URL:-https://api-aide.icho.su}
+      BACKEND_CLEAR_HISTORY_PATH: ${BACKEND_CLEAR_HISTORY_PATH:-/api/v1/clear-history}
+      BACKEND_MESSAGES_PATH: ${BACKEND_MESSAGES_PATH:-/api/v1/process}
+      BACKEND_STUB: ${BACKEND_STUB:-false}
       BACKEND_REQUEST_TIMEOUT: ${BACKEND_REQUEST_TIMEOUT:-45s}
     restart: unless-stopped
