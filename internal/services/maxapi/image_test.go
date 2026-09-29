@@ -3,6 +3,11 @@ package maxapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -83,5 +88,108 @@ func TestDownloadImageRejectsUnsafeURLAndRedactsFailedURL(t *testing.T) {
 	_, err := client.DownloadImage(ctx, "https://cdn.example/image?token=private")
 	if err == nil || strings.Contains(err.Error(), "private") {
 		t.Fatal("expected safe download error")
+	}
+}
+
+func TestDownloadImageAcceptsRealImageFormats(t *testing.T) {
+	var jpegBuffer, pngBuffer bytes.Buffer
+	picture := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	if err := jpeg.Encode(&jpegBuffer, picture, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(&pngBuffer, picture); err != nil {
+		t.Fatal(err)
+	}
+	webpBytes, err := base64.StdEncoding.DecodeString("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name         string
+		content      []byte
+		expectedMIME string
+	}{
+		{"jpeg", jpegBuffer.Bytes(), "image/jpeg"},
+		{"png", pngBuffer.Bytes(), "image/png"},
+		{"webp", webpBytes, "image/png"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// The response header and original filename are not reliable format indicators.
+				w.Header().Set("Content-Type", "image/jpeg")
+				_, _ = w.Write(test.content)
+			}))
+			defer server.Close()
+			client := &Client{imageHTTPClient: server.Client()}
+			result, err := client.DownloadImage(context.Background(), server.URL+"/original.jpg")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.MIMEType != test.expectedMIME {
+				t.Fatalf("unexpected MIME: %s", result.MIMEType)
+			}
+			if test.name == "webp" {
+				decoded, err := png.Decode(bytes.NewReader(result.Content))
+				if err != nil {
+					t.Fatalf("not a valid PNG: %v", err)
+				}
+				if decoded.Bounds().Dx() != 1 || decoded.Bounds().Dy() != 1 {
+					t.Fatal("wrong dimensions")
+				}
+			} else if !bytes.Equal(result.Content, test.content) {
+				t.Fatal("JPEG/PNG should pass through unchanged")
+			}
+		})
+	}
+}
+
+func TestDownloadImageReportsActualTypeWithoutURL(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<html>access denied</html>"))
+	}))
+	defer server.Close()
+	client := &Client{imageHTTPClient: server.Client()}
+	_, err := client.DownloadImage(context.Background(), server.URL+"/image?token=private")
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	for _, field := range []string{"detected_type=text/html", "response_type=text/html", "size_bytes="} {
+		if !strings.Contains(err.Error(), field) {
+			t.Fatalf("missing %s in error: %v", field, err)
+		}
+	}
+	if strings.Contains(err.Error(), "private") || strings.Contains(err.Error(), "access denied") {
+		t.Fatal("response or URL leaked")
+	}
+}
+
+func TestNormalizeImageRejectsLargeWebPBeforeDecoding(t *testing.T) {
+	// VP8L header declaring 8192 x 8192 pixels, with no pixel data.
+	content := []byte("RIFF\x12\x00\x00\x00WEBPVP8L\x05\x00\x00\x00\x2f\x00\x00\x00\x00\x00")
+	binary.LittleEndian.PutUint32(content[21:25], uint32(8191|(8191<<14)))
+	_, err := normalizeImage(content, "image/webp")
+	if err == nil || !strings.Contains(err.Error(), "разрешение") {
+		t.Fatalf("expected resolution rejection: %v", err)
+	}
+}
+
+func TestNormalizeImageRejectsBrokenWebP(t *testing.T) {
+	if _, err := normalizeImage([]byte("RIFF0000WEBPVP8 "), "image/webp"); err == nil {
+		t.Fatal("expected decoding error")
+	}
+}
+
+func TestPNGOutputWriterEnforcesSizeLimit(t *testing.T) {
+	var output bytes.Buffer
+	writer := &limitedImageWriter{buffer: &output}
+	if _, err := writer.Write(make([]byte, domain.MaxImageBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := writer.Write([]byte{1}); err == nil || n != 0 {
+		t.Fatal("expected output size rejection")
+	}
+	if output.Len() != domain.MaxImageBytes {
+		t.Fatal("oversized output was written")
 	}
 }

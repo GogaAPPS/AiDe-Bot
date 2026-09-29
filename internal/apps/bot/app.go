@@ -150,7 +150,10 @@ func (a *App) Run(ctx context.Context) error {
 			if len(message.Attachments) == 1 {
 				image, err := a.client.DownloadImage(messageCtx, message.Attachments[0].URL)
 				if err != nil {
-					a.logger.Warn("image download failed", "error", err)
+					a.logMessage(messageCtx, message, slog.LevelWarn, "image download failed",
+						"bot.image.download.failed", "bot_image_download_failed", applogging.DirectionIncoming,
+						slog.String(applogging.FieldError, err.Error()),
+					)
 					a.sendProcessingError(messageCtx, message.Target, "Не удалось загрузить фотографию. Проверьте формат JPEG/PNG и размер до 10 МиБ.")
 					continue
 				}
