@@ -1,0 +1,84 @@
+# DATA-API 1.0 — сценарий автоматической проверки AiDe Backend.
+# Проверки используют синтетический диалог и очищают его после выполнения.
+schemaVersion: "1.0"
+
+solution:
+  name: "AiDe Bot + AiDe Backend"
+
+api:
+  baseUrl: "https://api-aide.icho.su"
+  openapi: "./docs/backend-api.yaml"
+  defaultHeaders:
+    Accept: "application/json"
+
+checks:
+  - id: "health"
+    name: "Проверка доступности API"
+    method: "GET"
+    path: "/health"
+    role: "public"
+    expected:
+      statusCodes: [200]
+      contentType: "application/json"
+      requiredFields: ["status", "service"]
+      bodySchema:
+        type: "object"
+        required: ["status", "service"]
+        properties:
+          status:
+            const: "ok"
+          service:
+            type: "string"
+    timeoutMs: 5000
+    repeatable: true
+
+  - id: "process-message"
+    name: "Обработка сообщения ботом"
+    description: "Проверяет основной путь от HTTP-клиента до ответа backend."
+    method: "POST"
+    path: "/api/v1/process"
+    role: "public"
+    dependsOn: ["health"]
+    request:
+      headers:
+        Content-Type: "application/json"
+      body:
+        message_id: "judge-smoke-2026-09-29"
+        text: "Ответь коротко: проверка API."
+        chat_id: 900000000000001337
+        user_id: 900000000000001338
+    expected:
+      statusCodes: [200]
+      contentType: "application/json"
+      requiredFields: ["status", "text", "file", "error"]
+      bodySchema:
+        type: "object"
+        required: ["status", "text", "file", "error"]
+        properties:
+          status:
+            const: "ok"
+          text:
+            type: "string"
+            minLength: 1
+          file:
+            oneOf:
+              - type: "object"
+              - type: "null"
+          error:
+            type: "string"
+    timeoutMs: 120000
+    repeatable: false
+
+cleanup:
+  - id: "clear-test-conversation"
+    method: "POST"
+    path: "/api/v1/clear-history"
+    role: "public"
+    request:
+      headers:
+        Content-Type: "application/json"
+      body:
+        conversation_id: "chat_900000000000001337_user_900000000000001338"
+    expected:
+      statusCodes: [204]
+    timeoutMs: 10000
