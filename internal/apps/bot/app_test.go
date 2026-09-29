@@ -16,6 +16,9 @@ import (
 )
 
 type fakeBotClient struct {
+	image         *domain.IncomingImage
+	imageErr      error
+	imageURLs     []string
 	texts         []string
 	textsWithMenu []string
 	files         []string
@@ -91,14 +94,17 @@ func (f *fakeBotClient) DeleteMessage(_ context.Context, messageID string) error
 }
 
 type fakeBotBackend struct {
+	messages        []domain.IncomingMessage
+	sendErr         error
 	download        backend.FileDownload
 	downloadErr     error
 	clearTargets    []domain.Target
 	clearHistoryErr error
 }
 
-func (f *fakeBotBackend) SendMessage(context.Context, domain.IncomingMessage) (domain.BackendMessage, error) {
-	return domain.BackendMessage{}, nil
+func (f *fakeBotBackend) SendMessage(_ context.Context, message domain.IncomingMessage) (domain.BackendMessage, error) {
+	f.messages = append(f.messages, message)
+	return domain.BackendMessage{}, f.sendErr
 }
 
 func (f *fakeBotBackend) ClearHistory(_ context.Context, target domain.Target) error {
@@ -344,5 +350,54 @@ func TestRunRejectedMessageSendsMenu(t *testing.T) {
 	}
 	if len(client.textsWithMenu) != 1 || client.textsWithMenu[0] != "Напишите, пожалуйста, ваш запрос." {
 		t.Fatalf("rejected response should include menu: %v", client.textsWithMenu)
+	}
+}
+
+func (f *fakeBotClient) DownloadImage(_ context.Context, url string) (*domain.IncomingImage, error) {
+	f.imageURLs = append(f.imageURLs, url)
+	return f.image, f.imageErr
+}
+
+func TestRunDeliversPhotoWithoutCaption(t *testing.T) {
+	client := &fakeBotClient{
+		image: &domain.IncomingImage{Content: []byte("photo"), MIMEType: "image/png"},
+		updates: []model.Update{{UpdateType: model.UpdateMessageCreated, MessageID: "photo-id", ChatID: 42, UserID: 7,
+			Message: &model.MessageUpdate{Body: model.MessageBody{Attachments: []model.Attachment{
+				{Type: model.AttachImage, Payload: model.Payload{URL: "https://cdn.example/photo"}},
+			}}},
+		}},
+	}
+	backendClient := &fakeBotBackend{}
+	app := newTestApp(client, backendClient)
+	_ = app.Run(context.Background())
+	if len(backendClient.messages) != 1 || backendClient.messages[0].Image != client.image {
+		t.Fatalf("photo was not forwarded: %+v", backendClient.messages)
+	}
+	if len(client.imageURLs) != 1 || client.imageURLs[0] != "https://cdn.example/photo" {
+		t.Fatal("image was not downloaded")
+	}
+}
+
+func TestRunReportsRecognitionError(t *testing.T) {
+	client := &fakeBotClient{updates: []model.Update{{UpdateType: model.UpdateMessageCreated,
+		Message: &model.MessageUpdate{Body: model.MessageBody{Text: "question"}},
+	}}}
+	backendClient := &fakeBotBackend{sendErr: &backend.APIError{Code: "recognition_empty", Message: "Пришлите более чёткую фотографию."}}
+	_ = newTestApp(client, backendClient).Run(context.Background())
+	if len(client.textsWithMenu) != 1 || client.textsWithMenu[0] != "Пришлите более чёткую фотографию." {
+		t.Fatalf("expected error notification, got %+v", client.textsWithMenu)
+	}
+}
+
+func TestRunReportsDownloadFailureWithoutCallingBackend(t *testing.T) {
+	client := &fakeBotClient{imageErr: errors.New("download failed"), updates: []model.Update{{UpdateType: model.UpdateMessageCreated,
+		Message: &model.MessageUpdate{Body: model.MessageBody{Attachments: []model.Attachment{
+			{Type: model.AttachImage, Payload: model.Payload{URL: "https://cdn.example/photo"}},
+		}}},
+	}}}
+	backendClient := &fakeBotBackend{}
+	_ = newTestApp(client, backendClient).Run(context.Background())
+	if len(backendClient.messages) != 0 || len(client.textsWithMenu) != 1 {
+		t.Fatal("expected download error notification only")
 	}
 }
