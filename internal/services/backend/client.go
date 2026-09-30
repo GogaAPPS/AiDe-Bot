@@ -328,13 +328,7 @@ func (c *BackendClient) sendMessageStub(message domain.IncomingMessage) (domain.
 }
 
 func (c *BackendClient) sendMessageHTTP(ctx context.Context, message domain.IncomingMessage) (domain.BackendMessage, error) {
-	requestBody := sendMessageRequest{
-		MessageID: message.MessageID,
-		Text:      message.Text,
-		ChatID:    message.Target.ChatID,
-		UserID:    message.Target.UserID,
-	}
-	payload, err := json.Marshal(requestBody)
+	payload, contentType, err := encodeMessage(message)
 	if err != nil {
 		c.logFailure(ctx, message, fmt.Errorf("marshal backend request: %w", err))
 		return c.errorMessage(message, fmt.Errorf("marshal backend request: %w", err))
@@ -347,7 +341,8 @@ func (c *BackendClient) sendMessageHTTP(ctx context.Context, message domain.Inco
 		slog.String(applogging.FieldRoute, "backend.process"),
 		slog.String(applogging.FieldMethod, http.MethodPost),
 		slog.String(applogging.FieldURL, c.messagesURL),
-		slog.String(applogging.FieldBody, string(payload)),
+		slog.String("content_type", contentType),
+		slog.Int("request_bytes", len(payload)),
 	)
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.messagesURL, bytes.NewReader(payload))
@@ -355,7 +350,7 @@ func (c *BackendClient) sendMessageHTTP(ctx context.Context, message domain.Inco
 		c.logFailure(ctx, message, fmt.Errorf("create backend request: %w", err))
 		return c.errorMessage(message, fmt.Errorf("create backend request: %w", err))
 	}
-	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("X-Trace-ID", applogging.TraceID(ctx, message.MessageID, message.Target.ChatID, message.Target.UserID))
 	request.Header.Set("X-Client-Name", c.clientName)
 
@@ -409,6 +404,10 @@ func (c *BackendClient) sendMessageHTTP(ctx context.Context, message domain.Inco
 			slog.Int("http_status", httpResponse.StatusCode),
 			slog.String(applogging.FieldBody, string(body)),
 		)
+		var apiError APIError
+		if json.Unmarshal(body, &apiError) == nil && apiError.Code != "" && apiError.Message != "" {
+			return c.errorMessage(message, &apiError)
+		}
 		return c.errorMessage(message, fmt.Errorf("backend returned HTTP status %d", httpResponse.StatusCode))
 	}
 

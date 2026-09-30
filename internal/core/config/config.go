@@ -35,7 +35,7 @@ func Load() (Settings, error) {
 		BackendMessagesPath:     getEnv("BACKEND_MESSAGES_PATH", ""),
 		BackendClearHistoryPath: getEnv("BACKEND_CLEAR_HISTORY_PATH", ""),
 		BackendStub:             getBool("BACKEND_STUB", true),
-		BackendRequestTimeout:   getDuration("BACKEND_REQUEST_TIMEOUT", 10*time.Second),
+		BackendRequestTimeout:   getDuration("BACKEND_REQUEST_TIMEOUT", 10*time.Minute),
 		RequestTimeout:          getDuration("MAX_REQUEST_TIMEOUT", 45*time.Second),
 		PollingPause:            getDuration("MAX_POLLING_PAUSE", 500*time.Millisecond),
 		PollingTimeout:          getDuration("MAX_POLLING_TIMEOUT", 30*time.Second),

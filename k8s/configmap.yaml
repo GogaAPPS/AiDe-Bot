@@ -9,11 +9,11 @@ data:
   APP_NAME: aide-bot
   APP_ENV: production
   LOG_LEVEL: INFO
-  BACKEND_API_BASE_URL: https://api-aide.icho.su
+  BACKEND_API_BASE_URL: http://aide-backend.apps.svc.cluster.local
   BACKEND_CLEAR_HISTORY_PATH: ""
-  BACKEND_MESSAGES_PATH: ""
+  BACKEND_MESSAGES_PATH: "/api/v1/process"
   BACKEND_STUB: "false"
-  BACKEND_REQUEST_TIMEOUT: 45s
+  BACKEND_REQUEST_TIMEOUT: 10m
   MAX_API_BASE_URL: ""
   MAX_REQUEST_TIMEOUT: 45s
   MAX_POLLING_PAUSE: 500ms

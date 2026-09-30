@@ -14,7 +14,8 @@ import (
 )
 
 type Client struct {
-	api *maxbot.Api
+	api             *maxbot.Api
+	imageHTTPClient *http.Client
 }
 
 func NewClient(settings config.Settings) (*Client, error) {
@@ -33,7 +34,13 @@ func NewClient(settings config.Settings) (*Client, error) {
 		return nil, err
 	}
 
-	return &Client{api: api}, nil
+	return &Client{
+		api: api,
+		imageHTTPClient: &http.Client{
+			Timeout:       settings.RequestTimeout,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+		},
+	}, nil
 }
 
 func (c *Client) LogBotInfo(ctx context.Context, logger *slog.Logger) error {

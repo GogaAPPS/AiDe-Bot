@@ -27,6 +27,7 @@ type App struct {
 }
 
 type botClient interface {
+	DownloadImage(context.Context, string) (*domain.IncomingImage, error)
 	LogBotInfo(context.Context, *slog.Logger) error
 	GetUpdates(context.Context, int64) ([]model.Update, int64, error)
 	SendText(context.Context, domain.Target, string) error
@@ -109,14 +110,14 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			updateTraceID := applogging.NewTraceID(update.MessageID, update.ChatID, update.UserID)
 			updateCtx := applogging.WithTraceID(ctx, updateTraceID)
-			a.logUpdate(updateCtx, update, "bot.update.received", "bot_update_received", applogging.DirectionIncoming, slog.Any(applogging.FieldBody, update))
+			a.logUpdate(updateCtx, update, "bot.update.received", "bot_update_received", applogging.DirectionIncoming, slog.String("update_type", string(update.UpdateType)))
 
 			message, ok := maxapi.IncomingMessageFromUpdate(update)
 			if !ok {
 				a.logUpdate(updateCtx, update, "bot.update.skipped", "bot_update_skipped", applogging.DirectionInternal,
 					slog.String(applogging.FieldStatus, "skipped"),
 					slog.String("reason", "unsupported_update_type"),
-					slog.Any(applogging.FieldBody, update),
+					slog.String("update_type", string(update.UpdateType)),
 				)
 				continue
 			}
@@ -127,7 +128,7 @@ func (a *App) Run(ctx context.Context) error {
 				slog.Any(applogging.FieldBody, message),
 			)
 
-			if isStartCommand(message.Text) {
+			if isStartCommand(message.Text) && len(message.Attachments) == 0 {
 				if err := a.client.SendMainMenu(messageCtx, message.Target); err != nil {
 					a.logger.Error("send main menu", "error", err, "chat_id", message.Target.ChatID, "user_id", message.Target.UserID)
 				}
@@ -146,6 +147,18 @@ func (a *App) Run(ctx context.Context) error {
 				continue
 			}
 			message = filtered.Message
+			if len(message.Attachments) == 1 {
+				image, err := a.client.DownloadImage(messageCtx, message.Attachments[0].URL)
+				if err != nil {
+					a.logMessage(messageCtx, message, slog.LevelWarn, "image download failed",
+						"bot.image.download.failed", "bot_image_download_failed", applogging.DirectionIncoming,
+						slog.String(applogging.FieldError, err.Error()),
+					)
+					a.sendProcessingError(messageCtx, message.Target, "Не удалось загрузить фотографию. Проверьте формат JPEG/PNG и размер до 10 МиБ.")
+					continue
+				}
+				message.Image = image
+			}
 
 			a.logMessage(messageCtx, message, slog.LevelInfo, "bot backend route selected", "bot.backend.route", "bot_backend_route", applogging.DirectionOutgoing,
 				slog.String(applogging.FieldStatus, "selected"),
@@ -158,6 +171,12 @@ func (a *App) Run(ctx context.Context) error {
 					slog.String(applogging.FieldStatus, string(domain.BackendStatusError)),
 					slog.String(applogging.FieldError, err.Error()),
 				)
+				text := serviceUnavailableMessage
+				var apiError *backend.APIError
+				if errors.As(err, &apiError) && strings.HasPrefix(apiError.Code, "recognition_") {
+					text = apiError.Message
+				}
+				a.sendProcessingError(messageCtx, message.Target, text)
 				continue
 			}
 			if response.Status != domain.BackendStatusSuccess || (response.Text == "" && response.File == nil) {
@@ -352,4 +371,10 @@ func (a *App) logMessage(
 	attrs := applogging.TemplateAttrs(event, stage, direction, traceID, message.MessageID, message.Target.ChatID, message.Target.UserID)
 	attrs = append(attrs, extra...)
 	a.logger.LogAttrs(ctx, level, logMessage, attrs...)
+}
+
+func (a *App) sendProcessingError(ctx context.Context, target domain.Target, text string) {
+	if err := a.client.SendTextWithMenu(ctx, target, text); err != nil {
+		a.logger.Error("send processing error", "error", err, "chat_id", target.ChatID, "user_id", target.UserID)
+	}
 }

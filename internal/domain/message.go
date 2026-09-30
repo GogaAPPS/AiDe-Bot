@@ -5,10 +5,24 @@ type Target struct {
 	UserID int64
 }
 
+const MaxImageBytes = 10 * 1024 * 1024
+
+type IncomingAttachment struct {
+	Type string
+	URL  string `json:"-"`
+}
+
+type IncomingImage struct {
+	Content  []byte `json:"-"`
+	MIMEType string
+}
+
 type IncomingMessage struct {
-	Text      string
-	MessageID string
-	Target    Target
+	Attachments []IncomingAttachment
+	Image       *IncomingImage `json:"-"`
+	Text        string
+	MessageID   string
+	Target      Target
 }
 
 type OutgoingMessage struct {

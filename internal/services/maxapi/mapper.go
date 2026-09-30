@@ -19,10 +19,18 @@ func IncomingMessageFromUpdate(update model.Update) (domain.IncomingMessage, boo
 		return domain.IncomingMessage{}, false
 	}
 
-	text := strings.TrimSpace(update.GetMessage().Body.Text)
+	body := update.GetMessage().Body
+	attachments := make([]domain.IncomingAttachment, 0, len(body.Attachments))
+	for _, attachment := range body.Attachments {
+		attachments = append(attachments, domain.IncomingAttachment{
+			Type: string(attachment.Type), URL: attachment.Payload.URL,
+		})
+	}
+	text := strings.TrimSpace(body.Text)
 	return domain.IncomingMessage{
-		Text:      text,
-		MessageID: update.MessageID,
+		Text:        text,
+		Attachments: attachments,
+		MessageID:   update.MessageID,
 		Target: domain.Target{
 			ChatID: update.ChatID,
 			UserID: update.UserID,

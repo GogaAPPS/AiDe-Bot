@@ -51,3 +51,25 @@ func TestCheckAllowsCommandsAndShortServiceReplies(t *testing.T) {
 func message(text string) domain.IncomingMessage {
 	return domain.IncomingMessage{Text: text}
 }
+
+func TestFilterAcceptsSinglePhotoWithoutText(t *testing.T) {
+	filter := New(DefaultOptions())
+	result := filter.Check(domain.IncomingMessage{Attachments: []domain.IncomingAttachment{{Type: "image", URL: "https://cdn.example/image"}}})
+	if !result.Accepted {
+		t.Fatalf("photo rejected: %s", result.Explanation)
+	}
+}
+
+func TestFilterRejectsUnsupportedOrMultipleAttachments(t *testing.T) {
+	filter := New(DefaultOptions())
+	for _, attachments := range [][]domain.IncomingAttachment{
+		{{Type: "file", URL: "https://cdn.example/document"}},
+		{{Type: "image"}},
+		{{Type: "image", URL: "https://cdn.example/a"}, {Type: "image", URL: "https://cdn.example/b"}},
+	} {
+		result := filter.Check(domain.IncomingMessage{Text: "caption", Attachments: attachments})
+		if result.Accepted {
+			t.Fatalf("unexpected accepted attachments: %+v", attachments)
+		}
+	}
+}

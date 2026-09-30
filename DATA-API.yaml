@@ -1,0 +1,87 @@
+# DATA-API 1.0
+# Машиночитаемый сценарий обязательных проверок AiDe Backend.
+# Файл не содержит учётных данных или других секретов.
+
+schemaVersion: "1.0"
+
+solution:
+  name: "AiDe Bot"
+
+api:
+  baseUrl: "https://api-aide.icho.su"
+  defaultHeaders:
+    Accept: "application/json"
+
+checks:
+  - id: "health"
+    name: "Проверка доступности AiDe Backend"
+    description: "Проверяет, что публичный API запущен и готов принимать запросы."
+    method: "GET"
+    path: "/health"
+    role: "public"
+    expected:
+      statusCodes: [200]
+      contentType: "application/json"
+      requiredFields: ["status", "service"]
+      bodySchema:
+        type: "object"
+        required: ["status", "service"]
+        properties:
+          status:
+            type: "string"
+            const: "ok"
+          service:
+            type: "string"
+    timeoutMs: 5000
+    repeatable: true
+
+  - id: "process-message"
+    name: "Обработка сообщения пользователя"
+    description: "Проверяет основную функцию бота: обработку текстового сообщения и возврат ответа ассистента."
+    method: "POST"
+    path: "/api/v1/process"
+    role: "public"
+    dependsOn: ["health"]
+    request:
+      headers:
+        Content-Type: "application/json"
+      body:
+        message_id: "data-api-validation-1"
+        text: "Кратко расскажи, чем ты можешь помочь при подготовке строительной документации."
+        chat_id: -910001
+        user_id: -910001
+    expected:
+      statusCodes: [200]
+      contentType: "application/json"
+      requiredFields: ["status", "text", "file", "error"]
+      bodySchema:
+        type: "object"
+        required: ["status", "text", "file", "error"]
+        properties:
+          status:
+            type: "string"
+            const: "ok"
+          text:
+            type: "string"
+          file:
+            type: ["object", "null"]
+          error:
+            type: "string"
+          estimate_status:
+            type: ["string", "null"]
+    timeoutMs: 120000
+    repeatable: false
+
+cleanup:
+  - id: "clear-validation-history"
+    method: "POST"
+    path: "/api/v1/clear-history"
+    role: "public"
+    request:
+      headers:
+        Content-Type: "application/json"
+      body:
+        conversation_id: "chat_-910001_user_-910001"
+    expected:
+      statusCodes: [204]
+    timeoutMs: 5000

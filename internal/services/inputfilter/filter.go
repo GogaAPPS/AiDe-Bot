@@ -36,7 +36,16 @@ func New(options Options) *Filter {
 
 func (f *Filter) Check(message domain.IncomingMessage) Result {
 	message.Text = Normalize(message.Text)
-	if message.Text == "" {
+	if len(message.Attachments) > 1 {
+		return reject(message, "Пришлите одну фотографию за сообщение.")
+	}
+	if len(message.Attachments) == 1 {
+		attachment := message.Attachments[0]
+		if attachment.Type != "image" || attachment.URL == "" {
+			return reject(message, "Пришлите фотографию в формате JPEG или PNG.")
+		}
+	}
+	if message.Text == "" && len(message.Attachments) == 0 {
 		return reject(message, "Напишите, пожалуйста, ваш запрос.")
 	}
 
