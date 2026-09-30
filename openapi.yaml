@@ -1,0 +1,237 @@
+openapi: 3.1.0
+info:
+  title: AiDe Backend API
+  version: 1.0.0
+  description: API обработки сообщений и файлов для AiDe Bot.
+
+servers:
+  - url: https://api-aide.icho.su
+    description: Production
+
+tags:
+  - name: System
+  - name: Dialog
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Проверить доступность сервиса
+      operationId: getHealth
+      responses:
+        "200":
+          description: Сервис доступен
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
+                service: aide-backend
+
+  /api/v1/process:
+    post:
+      tags: [Dialog]
+      summary: Обработать сообщение пользователя
+      description: Принимает текстовое сообщение в JSON либо сообщение с одним JPEG/PNG-файлом в multipart/form-data.
+      operationId: processMessage
+      parameters:
+        - $ref: "#/components/parameters/TraceId"
+        - $ref: "#/components/parameters/ClientName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProcessRequest"
+            example:
+              message_id: data-api-validation-1
+              text: Кратко расскажи, чем ты можешь помочь при подготовке строительной документации.
+              chat_id: -910001
+              user_id: -910001
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/ProcessMultipartRequest"
+            encoding:
+              file:
+                contentType: image/jpeg, image/png
+      responses:
+        "200":
+          description: Сообщение обработано
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "413":
+          description: Загруженный файл слишком большой
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "415":
+          description: Неподдерживаемый тип файла
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+
+  /api/v1/clear-history:
+    post:
+      tags: [Dialog]
+      summary: Очистить историю диалога
+      operationId: clearHistory
+      parameters:
+        - $ref: "#/components/parameters/TraceId"
+        - $ref: "#/components/parameters/ClientName"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClearHistoryRequest"
+            example:
+              conversation_id: chat_-910001_user_-910001
+      responses:
+        "204":
+          description: История очищена
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/ErrorResponse"
+
+components:
+  parameters:
+    TraceId:
+      name: X-Trace-ID
+      in: header
+      required: false
+      description: Идентификатор запроса для трассировки.
+      schema:
+        type: string
+    ClientName:
+      name: X-Client-Name
+      in: header
+      required: false
+      description: Имя вызывающего клиента.
+      schema:
+        type: string
+        example: aide-bot
+
+  responses:
+    ErrorResponse:
+      description: Ошибка обработки запроса
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, service]
+      properties:
+        status:
+          type: string
+          const: ok
+        service:
+          type: string
+
+    ProcessRequest:
+      type: object
+      additionalProperties: false
+      required: [message_id, text, chat_id, user_id]
+      properties:
+        message_id:
+          type: string
+          minLength: 1
+        text:
+          type: string
+        chat_id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+
+    ProcessMultipartRequest:
+      type: object
+      additionalProperties: false
+      required: [message_id, chat_id, user_id, file]
+      properties:
+        message_id:
+          type: string
+          minLength: 1
+        text:
+          type: string
+        chat_id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        file:
+          type: string
+          format: binary
+          description: Один файл JPEG или PNG размером до 10 МиБ.
+
+    ProcessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, text, file, error]
+      properties:
+        status:
+          type: string
+          example: ok
+        text:
+          type: string
+        file:
+          oneOf:
+            - $ref: "#/components/schemas/BackendFile"
+            - type: "null"
+        error:
+          type: string
+        estimate_status:
+          type: [string, "null"]
+
+    BackendFile:
+      type: object
+      additionalProperties: false
+      required: [id, name, path, url, mime_type, size_bytes]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        url:
+          type: string
+          format: uri-reference
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+
+    ClearHistoryRequest:
+      type: object
+      additionalProperties: false
+      required: [conversation_id]
+      properties:
+        conversation_id:
+          type: string
+          minLength: 1
+          example: chat_-910001_user_-910001
+
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
