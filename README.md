@@ -104,7 +104,7 @@ MAX_BOT_TOKEN='<тестовый-токен-MAX>' BACKEND_STUB=false BACKEND_API
 | `BACKEND_API_BASE_URL` | при `BACKEND_STUB=false` | `http://localhost:8000` в Compose | Базовый URL AiDe Backend. |
 | `BACKEND_MESSAGES_PATH` | при `BACKEND_STUB=false` | пусто | Путь обработки сообщений, обычно `/api/v1/process`. |
 | `BACKEND_CLEAR_HISTORY_PATH` | для очистки истории | пусто | Путь очистки истории, обычно `/api/v1/clear-history`. |
-| `BACKEND_REQUEST_TIMEOUT` | нет | `10m` в приложении и `.env.example` | Общий таймаут запроса к backend с учётом OCR и LLM. |
+| `BACKEND_REQUEST_TIMEOUT` | нет | `45s` в Compose, `10m` в приложении | Общий таймаут запроса к backend с учётом OCR и LLM. |
 
 Значения времени поддерживают формат Go `time.Duration`: `500ms`, `45s`, `10m`.
 
